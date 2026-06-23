@@ -1,0 +1,20 @@
+{
+  "name": "magnetosphere",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "report": "bun run index.ts",
+    "report:ci": "bun run index.ts --output autopilot-report.md --json-output autopilot-snapshot.json",
+    "check": "bun tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.142.0"
+  }
+}

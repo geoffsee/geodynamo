@@ -1,0 +1,39 @@
+name: Autopilot Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 */6 * * *"
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  report:
+    name: Generate Caretta autopilot report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out reporter
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: bun run report:ci
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-report
+          path: |
+            autopilot-report.md
+            autopilot-snapshot.json

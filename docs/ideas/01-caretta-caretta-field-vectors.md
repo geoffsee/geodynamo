@@ -73,7 +73,7 @@ The operations in the conversion can also be typed.
 | `^` | Binary operator | Exponentiation or power. |
 | `atan2()` | Binary function | Calculates the two-argument arctangent and resolves the correct quadrant. |
 
-Follow-up: [Caretta Caretta Information Primitives](./caretta-caretta-information-primitives.md)
+Follow-up: [Caretta Caretta Information Primitives](./02-caretta-caretta-information-primitives.md)
 
 References:
 

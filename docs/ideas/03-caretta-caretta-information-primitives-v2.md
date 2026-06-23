@@ -1,6 +1,6 @@
 # Caretta Caretta Information Primitives (v2)
 
-This note revises [v1](./caretta-caretta-information-primitives.md) by addressing
+This note revises [v1](./02-caretta-caretta-information-primitives.md) by addressing
 peer-review feedback: naming the framework (Information Bottleneck), defining
 the task variable, splitting the noise model, and tightening the
 sufficient-statistic claim. It remains an abstraction for thinking about sensory

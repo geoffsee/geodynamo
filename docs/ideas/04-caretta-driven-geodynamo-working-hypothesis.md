@@ -4,9 +4,9 @@ This document synthesizes the working hypothesis for using an instance of
 Caretta downstream of Geodynamo to shape programmatic effects. It builds on:
 
 - [geoffsee/caretta](https://github.com/geoffsee/caretta)
-- [Caretta Caretta Field Vectors](./caretta-caretta-field-vectors.md)
-- [Caretta Caretta Information Primitives](./caretta-caretta-information-primitives.md)
-- [Caretta Caretta Information Primitives (v2)](./caretta-caretta-information-primitives-v2.md)
+- [Caretta Caretta Field Vectors](./01-caretta-caretta-field-vectors.md)
+- [Caretta Caretta Information Primitives](./02-caretta-caretta-information-primitives.md)
+- [Caretta Caretta Information Primitives (v2)](./03-caretta-caretta-information-primitives-v2.md)
 
 The goal is not to make Geodynamo or its dashboard a control plane. The
 dashboard remains a publish-only dashboard. The actual Caretta project is a

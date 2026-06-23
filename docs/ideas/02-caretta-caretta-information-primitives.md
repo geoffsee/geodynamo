@@ -1,7 +1,7 @@
 # Caretta Caretta Information Primitives
 
 This note experiments with translating the vector model in
-[Caretta Caretta Field Vectors](./caretta-caretta-field-vectors.md) into
+[Caretta Caretta Field Vectors](./01-caretta-caretta-field-vectors.md) into
 information-theoretic terms. It is an abstraction for thinking about sensory
 processing, not a claim that the turtle's receptor mechanism is known at this
 level.

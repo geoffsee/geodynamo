@@ -9,6 +9,7 @@ geodynamo-report.md
 geodynamo-snapshot.json
 geodynamo-field-map.json
 geodynamo-action-plan.json
+geodynamo-history.json
 geodynamo-state.sqlite*
 
 # code coverage

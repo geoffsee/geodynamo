@@ -33,6 +33,7 @@ type Options = {
   jsonOutput?: string;
   fieldOutput?: string;
   planOutput?: string;
+  historyOutput?: string;
   statePath?: string;
   noState: boolean;
   noCodex: boolean;
@@ -204,6 +205,28 @@ type FieldMap = {
   actions: RepoAction[];
 };
 
+type HistoryProject = {
+  repo: RepoSlug;
+  hazardLevel: HazardLevel;
+  failedRuns: number;
+  activeRuns: number;
+  openAutopilotPulls: number;
+  latestRunId: number | null;
+  actionPriorities: ActionPriority[];
+};
+
+type HistorySnapshot = {
+  generatedAt: string;
+  summary: FieldMap["summary"];
+  projects: HistoryProject[];
+};
+
+type HistoryOutput = {
+  generatedAt: string;
+  retentionDays: number;
+  snapshots: HistorySnapshot[];
+};
+
 const DEFAULT_PROJECTS: ProjectDescriptor[] = [
   createProjectDescriptor("geoffsee/cortex-enigma"),
   createProjectDescriptor("geoffsee/midi-vibe"),
@@ -219,6 +242,7 @@ const CARETTA_IDENTIFIERS = [
 
 const DEFAULT_CONFIG_PATH = "geodynamo-projects.json";
 const DEFAULT_STATE_PATH = "geodynamo-state.sqlite";
+const HISTORY_RETENTION_DAYS = 30;
 
 async function parseArgs(argv: string[]): Promise<Options> {
   const preflight = parseConfigPath(argv);
@@ -289,6 +313,9 @@ async function parseArgs(argv: string[]): Promise<Options> {
         break;
       case "--plan-output":
         options.planOutput = next();
+        break;
+      case "--history-output":
+        options.historyOutput = next();
         break;
       case "--state":
         options.statePath = next();
@@ -462,6 +489,7 @@ Options:
   --json-output path              Write collected GitHub snapshot to a file
   --field-output path             Write agent field map JSON to a file
   --plan-output path              Write action plan JSON to a file
+  --history-output path           Write compact field history JSON to a file
   --state path                    SQLite state path, default: geodynamo-state.sqlite
   --no-state                      Do not read or write durable state
   --no-codex                      Skip Codex SDK and emit deterministic report
@@ -976,9 +1004,15 @@ type StateRow = {
   hazard_level: string;
 };
 
+type HistoryRow = {
+  generated_at: string;
+  snapshot_json: string;
+};
+
 type StateStore = {
   previous: Map<RepoSlug, PreviousRepoState>;
   save: (fieldMap: FieldMap) => void;
+  history: () => HistoryOutput;
   close: () => void;
 };
 
@@ -995,6 +1029,12 @@ function openStateStore(path: string): StateStore {
       failure_count INTEGER NOT NULL,
       hazard_level TEXT NOT NULL,
       field_json TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS field_history (
+      generated_at TEXT PRIMARY KEY,
+      snapshot_json TEXT NOT NULL
     )
   `);
 
@@ -1036,6 +1076,17 @@ function openStateStore(path: string): StateStore {
       hazard_level = excluded.hazard_level,
       field_json = excluded.field_json
   `);
+  const historyStatement = db.prepare(`
+    INSERT INTO field_history (
+      generated_at,
+      snapshot_json
+    )
+    VALUES (?, ?)
+    ON CONFLICT(generated_at) DO UPDATE SET
+      snapshot_json = excluded.snapshot_json
+  `);
+  const pruneStatement = db.prepare("DELETE FROM field_history WHERE generated_at < ?");
+  const historyRows = db.query("SELECT * FROM field_history ORDER BY generated_at ASC");
 
   return {
     previous,
@@ -1053,6 +1104,12 @@ function openStateStore(path: string): StateStore {
           JSON.stringify(project),
         );
       }
+      historyStatement.run(fieldMap.generatedAt, JSON.stringify(compactHistorySnapshot(fieldMap)));
+      pruneStatement.run(historyCutoff(fieldMap.generatedAt));
+    },
+    history() {
+      const snapshots = (historyRows.all() as HistoryRow[]).map((row) => parseHistorySnapshot(row));
+      return buildHistoryOutput(new Date().toISOString(), snapshots);
     },
     close() {
       db.close();
@@ -1065,7 +1122,57 @@ function parseHazardLevel(value: string): HazardLevel {
   return "watch";
 }
 
-async function writeOutputs(report: string, snapshot: Snapshot, fieldMap: FieldMap, options: Options) {
+function compactHistorySnapshot(fieldMap: FieldMap): HistorySnapshot {
+  return {
+    generatedAt: fieldMap.generatedAt,
+    summary: fieldMap.summary,
+    projects: fieldMap.projects.map((project) => ({
+      repo: project.repo,
+      hazardLevel: project.hazardLevel,
+      failedRuns: project.signals.failedRuns,
+      activeRuns: project.signals.activeRuns,
+      openAutopilotPulls: project.signals.openAutopilotPulls,
+      latestRunId: project.signals.latestRun?.id ?? null,
+      actionPriorities: compactActionPriorities(project.actions),
+    })),
+  };
+}
+
+function compactActionPriorities(actions: RepoAction[]): ActionPriority[] {
+  const order: ActionPriority[] = ["urgent", "next", "observe"];
+  return order.filter((priority) => actions.some((action) => action.priority === priority));
+}
+
+function buildHistoryOutput(generatedAt: string, snapshots: HistorySnapshot[]): HistoryOutput {
+  return {
+    generatedAt,
+    retentionDays: HISTORY_RETENTION_DAYS,
+    snapshots: snapshots.slice().sort((left, right) => left.generatedAt.localeCompare(right.generatedAt)),
+  };
+}
+
+function parseHistorySnapshot(row: HistoryRow): HistorySnapshot {
+  const parsed = JSON.parse(row.snapshot_json) as Partial<HistorySnapshot>;
+  return {
+    generatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : row.generated_at,
+    summary: parsed.summary as FieldMap["summary"],
+    projects: Array.isArray(parsed.projects) ? parsed.projects as HistoryProject[] : [],
+  };
+}
+
+function historyCutoff(generatedAt: string): string {
+  const parsed = Date.parse(generatedAt);
+  const baseTime = Number.isFinite(parsed) ? parsed : Date.now();
+  return new Date(baseTime - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+async function writeOutputs(
+  report: string,
+  snapshot: Snapshot,
+  fieldMap: FieldMap,
+  history: HistoryOutput,
+  options: Options,
+) {
   if (options.output) {
     await Bun.write(options.output, report);
   }
@@ -1083,6 +1190,10 @@ async function writeOutputs(report: string, snapshot: Snapshot, fieldMap: FieldM
       generatedAt: fieldMap.generatedAt,
       actions: fieldMap.actions,
     }, null, 2)}\n`);
+  }
+
+  if (options.historyOutput) {
+    await Bun.write(options.historyOutput, `${JSON.stringify(history, null, 2)}\n`);
   }
 
   const stepSummary = process.env.GITHUB_STEP_SUMMARY;
@@ -1114,9 +1225,12 @@ async function main() {
   }
 
   state?.save(fieldMap);
+  const history = state
+    ? state.history()
+    : buildHistoryOutput(snapshot.generatedAt, [compactHistorySnapshot(fieldMap)]);
   state?.close();
 
-  await writeOutputs(report, snapshot, fieldMap, options);
+  await writeOutputs(report, snapshot, fieldMap, history, options);
   console.log(report);
 }
 

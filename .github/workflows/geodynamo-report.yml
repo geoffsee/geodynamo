@@ -11,12 +11,21 @@ on:
 permissions:
   contents: read
   actions: read
+  pages: write
+  id-token: write
   pull-requests: read
+
+concurrency:
+  group: geodynamo-pages
+  cancel-in-progress: false
 
 jobs:
   report:
     name: Generate Geodynamo field report
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Check out geodynamo
         uses: actions/checkout@v4
@@ -27,11 +36,42 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Restore previous state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          artifact_id="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+              -q '.artifacts[] | select(.name == "geodynamo-state" and .expired == false) | [.created_at, .id] | @tsv' \
+              | sort -r \
+              | head -n 1 \
+              | cut -f2
+          )"
+
+          if [[ -z "${artifact_id}" ]]; then
+            echo "No previous geodynamo-state artifact found."
+            exit 0
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > geodynamo-state.zip
+          unzip -o geodynamo-state.zip
+          rm geodynamo-state.zip
+
       - name: Generate report
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: bun run report:ci
+
+      - name: Upload state artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geodynamo-state
+          path: geodynamo-state.sqlite
+          if-no-files-found: warn
+          retention-days: 35
 
       - name: Upload report artifacts
         uses: actions/upload-artifact@v4
@@ -42,3 +82,28 @@ jobs:
             geodynamo-snapshot.json
             geodynamo-field-map.json
             geodynamo-action-plan.json
+            geodynamo-history.json
+
+      - name: Build dashboard
+        run: bun run build:dashboard
+
+      - name: Copy dashboard data
+        run: |
+          set -euo pipefail
+          cp geodynamo-report.md dist/dashboard/
+          cp geodynamo-snapshot.json dist/dashboard/
+          cp geodynamo-field-map.json dist/dashboard/
+          cp geodynamo-action-plan.json dist/dashboard/
+          cp geodynamo-history.json dist/dashboard/
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/dashboard
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -42,7 +42,10 @@ owner, action, and deployment context.
 - Field map JSON: per-project signals, hazards, drift, routes, and actions for
   agents.
 - Action plan JSON: the top-level action list extracted from the field map.
-- SQLite state: previous run state used to detect drift across executions.
+- History JSON: compact 30-day field snapshots for the published dashboard.
+- SQLite state: previous run state used to detect drift across executions and
+  compact field history for dashboard trends.
+- Dashboard: a read-only React view built into `dist/dashboard`.
 
 ## Setup
 
@@ -67,6 +70,7 @@ bun run report -- --limit 10 --days 14
 bun run report -- --output geodynamo-report.md
 bun run report -- --json-output geodynamo-snapshot.json
 bun run report -- --field-output geodynamo-field-map.json --plan-output geodynamo-action-plan.json
+bun run report -- --history-output geodynamo-history.json
 bun run report -- --state geodynamo-state.sqlite
 bun run report -- --no-state
 bun run report -- --no-codex
@@ -83,16 +87,35 @@ access without spending model time.
 
 The included workflow at `.github/workflows/geodynamo-report.yml` runs on a
 schedule and by manual dispatch. It writes the report to the GitHub Actions job
-summary and uploads the Markdown report, raw snapshot, field map, and action
-plan as artifacts.
+summary, restores the latest `geodynamo-state` artifact when one exists,
+uploads the updated SQLite state, builds the dashboard, and publishes
+`dist/dashboard` through GitHub Pages. It also uploads the Markdown report, raw
+snapshot, field map, action plan, and history JSON as artifacts.
 
 Configure a repository secret named `OPENAI_API_KEY` if CI should generate the
 Codex-written report. Without it, the command will fall back to the
 deterministic report unless `--fail-on-codex-error` is passed.
 
+GitHub Pages must be enabled once in repository settings with Source set to
+GitHub Actions before the first dashboard deployment can publish.
+
+## Dashboard
+
+```bash
+bun run report -- --no-codex --no-state --limit 1 \
+  --field-output geodynamo-field-map.json \
+  --plan-output geodynamo-action-plan.json \
+  --history-output geodynamo-history.json
+bun run build:dashboard
+```
+
+For a local preview, copy the generated JSON files into `dist/dashboard` and
+serve that directory with any static file server.
+
 ## Verify
 
 ```bash
 bun run check
-bun run report -- --no-codex --no-state --limit 1
+bun run report -- --no-codex --no-state --limit 1 --history-output /tmp/geodynamo-history.json
+bun run build:dashboard
 ```

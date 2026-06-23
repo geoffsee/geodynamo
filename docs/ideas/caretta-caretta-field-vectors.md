@@ -47,6 +47,34 @@ map responses, while magnetic pulses disrupted map responses. That pattern is
 consistent with separate sensory machinery for map and compass processing,
 though the exact receptors are not fully settled.
 
+## Symbol Types
+
+The symbolic entities in the vector conversion can be classified as generic
+mathematical and programmatic types.
+
+| Symbol | Type | Meaning |
+| --- | --- | --- |
+| `B` | 3D vector / array | Total magnetic field in 3D space. |
+| `Bx` | Scalar, linear component | X-axis component. |
+| `By` | Scalar, linear component | Y-axis component. |
+| `Bz` | Scalar, linear component | Z-axis component. |
+| `F` | Scalar, magnitude | Total vector magnitude or Euclidean norm. |
+| `H` | Scalar, magnitude | Two-dimensional projected magnitude on the horizontal plane. |
+| `I` | Scalar, angle | Elevation or inclination angle. |
+| `A` | Scalar, angle | Azimuth or horizontal bearing angle. |
+
+The operations in the conversion can also be typed.
+
+| Symbol | Type | Meaning |
+| --- | --- | --- |
+| `[ ]` | Data structure constructor | Creates the array or vector. |
+| `| |` | Norm / magnitude operator | Calculates the Euclidean length of a vector. |
+| `sqrt()` | Unary function | Calculates the square root of a single value. |
+| `^` | Binary operator | Exponentiation or power. |
+| `atan2()` | Binary function | Calculates the two-argument arctangent and resolves the correct quadrant. |
+
+Follow-up: [Caretta Caretta Information Primitives](./caretta-caretta-information-primitives.md)
+
 References:
 
 - Kenneth J. Lohmann, "Magnetic Orientation By Hatchling Loggerhead Sea Turtles

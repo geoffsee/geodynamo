@@ -1,0 +1,37 @@
+{
+  "workflowName": "Autopilot",
+  "limit": 5,
+  "days": 7,
+  "statePath": "geodynamo-state.sqlite",
+  "projects": [
+    {
+      "repo": "geoffsee/cortex-enigma",
+      "priority": "normal",
+      "risk": "medium",
+      "workflowNames": ["Autopilot"],
+      "owners": [],
+      "allowedActions": ["observe", "report"]
+    },
+    {
+      "repo": "geoffsee/midi-vibe",
+      "priority": "high",
+      "risk": "medium",
+      "workflowNames": ["Autopilot"],
+      "owners": [],
+      "allowedActions": ["observe", "report"],
+      "deploy": {
+        "environment": "release",
+        "policy": "review open autopilot PRs before release tagging",
+        "url": "https://github.com/geoffsee/midi-vibe/actions/workflows/release.yml"
+      }
+    },
+    {
+      "repo": "geoffsee/bevy-osc-app",
+      "priority": "high",
+      "risk": "medium",
+      "workflowNames": ["Autopilot"],
+      "owners": [],
+      "allowedActions": ["observe", "report"]
+    }
+  ]
+}

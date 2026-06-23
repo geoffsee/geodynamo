@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "magnetosphere",
+      "name": "geodynamo",
       "dependencies": {
         "@openai/codex-sdk": "^0.142.0",
       },

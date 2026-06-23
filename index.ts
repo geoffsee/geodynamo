@@ -1,9 +1,28 @@
 import { Codex, type ModelReasoningEffort } from "@openai/codex-sdk";
+import { Database } from "bun:sqlite";
 
 type RepoSlug = `${string}/${string}`;
+type Priority = "low" | "normal" | "high";
+type RiskLevel = "low" | "medium" | "high";
+type HazardLevel = "clear" | "watch" | "blocked";
+type ActionPriority = "observe" | "next" | "urgent";
+
+type ProjectDescriptor = {
+  repo: RepoSlug;
+  priority: Priority;
+  risk: RiskLevel;
+  workflowNames: string[];
+  owners: string[];
+  allowedActions: string[];
+  deploy?: {
+    environment?: string;
+    policy?: string;
+    url?: string;
+  };
+};
 
 type Options = {
-  repos: RepoSlug[];
+  projects: ProjectDescriptor[];
   configPath: string;
   workflowName: string;
   limit: number;
@@ -12,15 +31,36 @@ type Options = {
   reasoning: ModelReasoningEffort;
   output?: string;
   jsonOutput?: string;
+  fieldOutput?: string;
+  planOutput?: string;
+  statePath?: string;
+  noState: boolean;
   noCodex: boolean;
   failOnCodexError: boolean;
 };
 
 type ConfigFile = {
+  projects?: Array<string | ConfigProject>;
   repos?: string[];
   workflowName?: string;
   limit?: number;
   days?: number;
+  statePath?: string;
+};
+
+type ConfigProject = {
+  repo?: string;
+  priority?: string;
+  risk?: string;
+  workflowName?: string;
+  workflowNames?: string[];
+  owners?: string[];
+  allowedActions?: string[];
+  deploy?: {
+    environment?: string;
+    policy?: string;
+    url?: string;
+  };
 };
 
 type WorkflowRun = {
@@ -77,6 +117,7 @@ type PullRequest = {
 
 type RepoReport = {
   repo: RepoSlug;
+  project: ProjectDescriptor;
   generatedAt: string;
   runs: Array<WorkflowRun & { durationSeconds: number | null; jobs: Job[] }>;
   openAutopilotPulls: PullRequest[];
@@ -89,10 +130,84 @@ type Snapshot = {
   repos: RepoReport[];
 };
 
-const DEFAULT_REPOS: RepoSlug[] = [
-  "geoffsee/cortex-enigma",
-  "geoffsee/midi-vibe",
-  "geoffsee/bevy-osc-app",
+type PreviousRepoState = {
+  repo: RepoSlug;
+  generatedAt: string;
+  latestRunId: number | null;
+  latestRunConclusion: string | null;
+  latestRunCreatedAt: string | null;
+  openPullCount: number;
+  failureCount: number;
+  hazardLevel: HazardLevel;
+};
+
+type RepoAction = {
+  repo: RepoSlug;
+  priority: ActionPriority;
+  reason: string;
+  command: string;
+  links: string[];
+};
+
+type RepoField = {
+  repo: RepoSlug;
+  priority: Priority;
+  risk: RiskLevel;
+  workflowNames: string[];
+  owners: string[];
+  allowedActions: string[];
+  deploy?: ProjectDescriptor["deploy"];
+  signals: {
+    latestRun: {
+      id: number;
+      runNumber: number;
+      conclusion: string | null;
+      status: string;
+      branch: string | null;
+      createdAt: string;
+      url: string;
+      durationSeconds: number | null;
+    } | null;
+    recentRuns: number;
+    failedRuns: number;
+    activeRuns: number;
+    openAutopilotPulls: number;
+    collectionErrors: number;
+  };
+  hazards: string[];
+  hazardLevel: HazardLevel;
+  drift: {
+    previousGeneratedAt: string | null;
+    latestRunChanged: boolean | null;
+    openPullDelta: number | null;
+    failureDelta: number | null;
+    hazardChanged: boolean | null;
+  };
+  routes: string[];
+  actions: RepoAction[];
+};
+
+type FieldMap = {
+  generatedAt: string;
+  metaphor: "geomagnetic-navigation-field";
+  summary: {
+    projects: number;
+    recentRuns: number;
+    failedRuns: number;
+    activeRuns: number;
+    openAutopilotPulls: number;
+    blockedProjects: number;
+    watchedProjects: number;
+    clearProjects: number;
+  };
+  projects: RepoField[];
+  actions: RepoAction[];
+};
+
+const DEFAULT_PROJECTS: ProjectDescriptor[] = [
+  createProjectDescriptor("geoffsee/cortex-enigma"),
+  createProjectDescriptor("geoffsee/midi-vibe"),
+  createProjectDescriptor("geoffsee/bevy-osc-app"),
 ];
 
 const CARETTA_IDENTIFIERS = [
@@ -102,18 +217,21 @@ const CARETTA_IDENTIFIERS = [
   "autopilot",
 ];
 
-const DEFAULT_CONFIG_PATH = "caretta-projects.json";
+const DEFAULT_CONFIG_PATH = "geodynamo-projects.json";
+const DEFAULT_STATE_PATH = "geodynamo-state.sqlite";
 
 async function parseArgs(argv: string[]): Promise<Options> {
   const preflight = parseConfigPath(argv);
   const config = await loadConfig(preflight.configPath);
   const options: Options = {
-    repos: parseConfigRepos(config, preflight.configPath),
+    projects: parseConfigProjects(config, preflight.configPath),
     configPath: preflight.configPath,
     workflowName: config.workflowName ?? "Autopilot",
     limit: config.limit ?? 5,
     days: config.days ?? 7,
+    statePath: config.statePath ?? DEFAULT_STATE_PATH,
     reasoning: "medium",
+    noState: false,
     noCodex: false,
     failOnCodexError: false,
   };
@@ -134,13 +252,19 @@ async function parseArgs(argv: string[]): Promise<Options> {
         next();
         break;
       case "--repo":
-        options.repos.push(parseRepo(next()));
+        options.projects.push(createProjectDescriptor(parseRepo(next()), options.workflowName));
         break;
       case "--repos":
-        options.repos = next().split(",").map((repo) => parseRepo(repo.trim()));
+        options.projects = next()
+          .split(",")
+          .map((repo) => createProjectDescriptor(parseRepo(repo.trim()), options.workflowName));
         break;
       case "--workflow":
         options.workflowName = next();
+        options.projects = options.projects.map((project) => ({
+          ...project,
+          workflowNames: uniqueStrings([options.workflowName, ...project.workflowNames]),
+        }));
         break;
       case "--limit":
         options.limit = parsePositiveInteger(next(), "--limit");
@@ -160,6 +284,18 @@ async function parseArgs(argv: string[]): Promise<Options> {
       case "--json-output":
         options.jsonOutput = next();
         break;
+      case "--field-output":
+        options.fieldOutput = next();
+        break;
+      case "--plan-output":
+        options.planOutput = next();
+        break;
+      case "--state":
+        options.statePath = next();
+        break;
+      case "--no-state":
+        options.noState = true;
+        break;
       case "--no-codex":
         options.noCodex = true;
         break;
@@ -175,7 +311,7 @@ async function parseArgs(argv: string[]): Promise<Options> {
     }
   }
 
-  options.repos = [...new Set(options.repos)];
+  options.projects = dedupeProjects(options.projects);
   return options;
 }
 
@@ -189,7 +325,9 @@ function parseRepo(value: string): RepoSlug {
 function parseConfigPath(argv: string[]): { configPath: string } {
   const configFlagIndex = argv.indexOf("--config");
   if (configFlagIndex === -1) {
-    return { configPath: process.env.CARETTA_REPORT_CONFIG ?? DEFAULT_CONFIG_PATH };
+    return {
+      configPath: process.env.GEODYNAMO_CONFIG ?? DEFAULT_CONFIG_PATH,
+    };
   }
 
   const configPath = argv[configFlagIndex + 1];
@@ -203,7 +341,7 @@ async function loadConfig(path: string): Promise<ConfigFile> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
     if (path === DEFAULT_CONFIG_PATH) {
-      return { repos: DEFAULT_REPOS };
+      return { projects: DEFAULT_PROJECTS };
     }
     throw new Error(`Config file not found: ${path}`);
   }
@@ -216,11 +354,77 @@ async function loadConfig(path: string): Promise<ConfigFile> {
   return parsed as ConfigFile;
 }
 
-function parseConfigRepos(config: ConfigFile, configPath: string): RepoSlug[] {
-  if (!config.repos || config.repos.length === 0) {
-    throw new Error(`Config file must include at least one repo in "repos": ${configPath}`);
+function parseConfigProjects(config: ConfigFile, configPath: string): ProjectDescriptor[] {
+  if (config.projects && config.projects.length > 0) {
+    return config.projects.map((project) => parseConfigProject(project, config.workflowName ?? "Autopilot"));
   }
-  return config.repos.map((repo) => parseRepo(repo));
+
+  if (config.repos && config.repos.length > 0) {
+    return config.repos.map((repo) => createProjectDescriptor(parseRepo(repo), config.workflowName ?? "Autopilot"));
+  }
+
+  throw new Error(`Config file must include at least one project in "projects" or repo in "repos": ${configPath}`);
+}
+
+function parseConfigProject(project: string | ConfigProject, defaultWorkflowName: string): ProjectDescriptor {
+  if (typeof project === "string") {
+    return createProjectDescriptor(parseRepo(project), defaultWorkflowName);
+  }
+
+  if (!project || typeof project !== "object" || !project.repo) {
+    throw new Error("Each project must be an owner/repo string or an object with a repo field");
+  }
+
+  const workflowNames = uniqueStrings([
+    project.workflowName,
+    ...(project.workflowNames ?? []),
+    defaultWorkflowName,
+  ].filter((value): value is string => Boolean(value)));
+
+  return {
+    repo: parseRepo(project.repo),
+    priority: parsePriority(project.priority),
+    risk: parseRisk(project.risk),
+    workflowNames,
+    owners: project.owners ?? [],
+    allowedActions: project.allowedActions ?? ["observe", "report"],
+    deploy: project.deploy,
+  };
+}
+
+function createProjectDescriptor(repo: RepoSlug, workflowName = "Autopilot"): ProjectDescriptor {
+  return {
+    repo,
+    priority: "normal",
+    risk: "medium",
+    workflowNames: [workflowName],
+    owners: [],
+    allowedActions: ["observe", "report"],
+  };
+}
+
+function parsePriority(value: string | undefined): Priority {
+  if (!value) return "normal";
+  if (value === "low" || value === "normal" || value === "high") return value;
+  throw new Error(`Project priority must be one of: low, normal, high`);
+}
+
+function parseRisk(value: string | undefined): RiskLevel {
+  if (!value) return "medium";
+  if (value === "low" || value === "medium" || value === "high") return value;
+  throw new Error(`Project risk must be one of: low, medium, high`);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function dedupeProjects(projects: ProjectDescriptor[]): ProjectDescriptor[] {
+  const deduped = new Map<RepoSlug, ProjectDescriptor>();
+  for (const project of projects) {
+    deduped.set(project.repo, project);
+  }
+  return [...deduped.values()];
 }
 
 function parsePositiveInteger(value: string, flag: string): number {
@@ -240,13 +444,13 @@ function parseReasoning(value: string): ModelReasoningEffort {
 }
 
 function printHelp() {
-  console.log(`Caretta autopilot reporter
+  console.log(`Geodynamo Caretta navigation field
 
 Usage:
   bun run report [options]
 
 Options:
-  --config path                   Project config, default: caretta-projects.json
+  --config path                   Project config, default: geodynamo-projects.json
   --repos owner/name,owner/name   Replace configured repos for this run
   --repo owner/name               Add a repo to configured repos for this run
   --workflow name                 Workflow name to filter, default: Autopilot
@@ -256,6 +460,10 @@ Options:
   --reasoning level               minimal, low, medium, high, xhigh
   --output path                   Write markdown report to a file
   --json-output path              Write collected GitHub snapshot to a file
+  --field-output path             Write agent field map JSON to a file
+  --plan-output path              Write action plan JSON to a file
+  --state path                    SQLite state path, default: geodynamo-state.sqlite
+  --no-state                      Do not read or write durable state
   --no-codex                      Skip Codex SDK and emit deterministic report
   --fail-on-codex-error           Exit non-zero if Codex report generation fails
 `);
@@ -264,7 +472,7 @@ Options:
 async function githubGet<T>(url: string): Promise<T> {
   const headers = new Headers({
     Accept: "application/vnd.github+json",
-    "User-Agent": "caretta-codex-reporter",
+    "User-Agent": "geodynamo-caretta-navigation",
     "X-GitHub-Api-Version": "2022-11-28",
   });
 
@@ -282,10 +490,11 @@ async function githubGet<T>(url: string): Promise<T> {
   return await response.json() as T;
 }
 
-async function collectRepo(repo: RepoSlug, options: Options): Promise<RepoReport> {
+async function collectRepo(project: ProjectDescriptor, options: Options): Promise<RepoReport> {
   const since = new Date(Date.now() - options.days * 24 * 60 * 60 * 1000);
   const report: RepoReport = {
-    repo,
+    repo: project.repo,
+    project,
     generatedAt: new Date().toISOString(),
     runs: [],
     openAutopilotPulls: [],
@@ -294,11 +503,11 @@ async function collectRepo(repo: RepoSlug, options: Options): Promise<RepoReport
 
   try {
     const runsResponse = await githubGet<{ workflow_runs: WorkflowRun[] }>(
-      `https://api.github.com/repos/${repo}/actions/runs?per_page=50`,
+      `https://api.github.com/repos/${project.repo}/actions/runs?per_page=50`,
     );
 
     const matchingRuns = runsResponse.workflow_runs
-      .filter((run) => isAutopilotRun(run, options.workflowName))
+      .filter((run) => isAutopilotRun(run, project.workflowNames))
       .filter((run) => new Date(run.created_at) >= since)
       .slice(0, options.limit);
 
@@ -314,7 +523,7 @@ async function collectRepo(repo: RepoSlug, options: Options): Promise<RepoReport
   }
 
   try {
-    report.openAutopilotPulls = await collectOpenPulls(repo);
+    report.openAutopilotPulls = await collectOpenPulls(project.repo);
   } catch (error) {
     report.errors.push(errorMessage(error));
   }
@@ -322,8 +531,8 @@ async function collectRepo(repo: RepoSlug, options: Options): Promise<RepoReport
   return report;
 }
 
-function isAutopilotRun(run: WorkflowRun, workflowName: string): boolean {
-  return run.name === workflowName || run.path.endsWith("/autopilot.yml") || run.path.endsWith("/autopilot.yaml");
+function isAutopilotRun(run: WorkflowRun, workflowNames: string[]): boolean {
+  return workflowNames.includes(run.name ?? "") || run.path.endsWith("/autopilot.yml") || run.path.endsWith("/autopilot.yaml");
 }
 
 function normalizeRun(run: WorkflowRun): WorkflowRun {
@@ -403,7 +612,208 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function buildCodexReport(snapshot: Snapshot, options: Options): Promise<string> {
+function buildFieldMap(snapshot: Snapshot, previousStates: Map<RepoSlug, PreviousRepoState>): FieldMap {
+  const projects = snapshot.repos.map((repo) => buildRepoField(repo, previousStates.get(repo.repo) ?? null));
+  const actions = projects.flatMap((project) => project.actions).sort(compareActions);
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    metaphor: "geomagnetic-navigation-field",
+    summary: {
+      projects: projects.length,
+      recentRuns: projects.reduce((sum, project) => sum + project.signals.recentRuns, 0),
+      failedRuns: projects.reduce((sum, project) => sum + project.signals.failedRuns, 0),
+      activeRuns: projects.reduce((sum, project) => sum + project.signals.activeRuns, 0),
+      openAutopilotPulls: projects.reduce((sum, project) => sum + project.signals.openAutopilotPulls, 0),
+      blockedProjects: projects.filter((project) => project.hazardLevel === "blocked").length,
+      watchedProjects: projects.filter((project) => project.hazardLevel === "watch").length,
+      clearProjects: projects.filter((project) => project.hazardLevel === "clear").length,
+    },
+    projects,
+    actions,
+  };
+}
+
+function buildRepoField(repo: RepoReport, previous: PreviousRepoState | null): RepoField {
+  const failedRuns = repo.runs.filter((run) => run.conclusion && run.conclusion !== "success");
+  const activeRuns = repo.runs.filter((run) => run.status !== "completed");
+  const latestRun = repo.runs[0] ?? null;
+  const latestRunSignal = latestRun
+    ? {
+      id: latestRun.id,
+      runNumber: latestRun.run_number,
+      conclusion: latestRun.conclusion,
+      status: latestRun.status,
+      branch: latestRun.head_branch,
+      createdAt: latestRun.created_at,
+      url: latestRun.html_url,
+      durationSeconds: latestRun.durationSeconds,
+    }
+    : null;
+
+  const hazards = buildHazards(repo, failedRuns, activeRuns);
+  const hazardLevel = classifyHazards(repo, failedRuns, activeRuns);
+  const field: RepoField = {
+    repo: repo.repo,
+    priority: repo.project.priority,
+    risk: repo.project.risk,
+    workflowNames: repo.project.workflowNames,
+    owners: repo.project.owners,
+    allowedActions: repo.project.allowedActions,
+    deploy: repo.project.deploy,
+    signals: {
+      latestRun: latestRunSignal,
+      recentRuns: repo.runs.length,
+      failedRuns: failedRuns.length,
+      activeRuns: activeRuns.length,
+      openAutopilotPulls: repo.openAutopilotPulls.length,
+      collectionErrors: repo.errors.length,
+    },
+    hazards,
+    hazardLevel,
+    drift: {
+      previousGeneratedAt: previous?.generatedAt ?? null,
+      latestRunChanged: previous ? previous.latestRunId !== (latestRun?.id ?? null) : null,
+      openPullDelta: previous ? repo.openAutopilotPulls.length - previous.openPullCount : null,
+      failureDelta: previous ? failedRuns.length - previous.failureCount : null,
+      hazardChanged: previous ? previous.hazardLevel !== hazardLevel : null,
+    },
+    routes: buildRoutes(repo, failedRuns, activeRuns, hazardLevel),
+    actions: [],
+  };
+
+  field.actions = buildActions(repo, failedRuns, activeRuns, hazardLevel);
+  return field;
+}
+
+function buildHazards(repo: RepoReport, failedRuns: RepoReport["runs"], activeRuns: RepoReport["runs"]): string[] {
+  const hazards: string[] = [];
+  if (repo.errors.length > 0) hazards.push("collector-errors");
+  if (repo.runs.length === 0) hazards.push("no-recent-autopilot-runs");
+  if (failedRuns.length > 0) hazards.push("failed-autopilot-runs");
+  if (activeRuns.length > 0) hazards.push("active-autopilot-runs");
+  if (repo.openAutopilotPulls.length > 0) hazards.push("open-autopilot-prs");
+  if (repo.openAutopilotPulls.length > 2) hazards.push("crowded-autopilot-pr-queue");
+  return hazards;
+}
+
+function classifyHazards(repo: RepoReport, failedRuns: RepoReport["runs"], activeRuns: RepoReport["runs"]): HazardLevel {
+  if (repo.errors.length > 0 || failedRuns.length > 0) return "blocked";
+  if (repo.runs.length === 0 || activeRuns.length > 0 || repo.openAutopilotPulls.length > 0) return "watch";
+  return "clear";
+}
+
+function buildRoutes(
+  repo: RepoReport,
+  failedRuns: RepoReport["runs"],
+  activeRuns: RepoReport["runs"],
+  hazardLevel: HazardLevel,
+): string[] {
+  const routes: string[] = [];
+
+  if (repo.errors.length > 0) {
+    routes.push("Restore collector access before using this repo for routing decisions.");
+  }
+  if (repo.runs.length === 0) {
+    routes.push("Verify the Autopilot workflow exists and has run inside the lookback window.");
+  }
+  if (failedRuns.length > 0) {
+    routes.push("Inspect failed jobs and retry only after the failing step is understood.");
+  }
+  if (activeRuns.length > 0) {
+    routes.push("Let active runs settle before dispatching new work.");
+  }
+  if (repo.openAutopilotPulls.length > 0) {
+    routes.push("Review open autopilot PRs; merge ready work or close stale routes.");
+  }
+  if (repo.project.deploy) {
+    const policy = repo.project.deploy.policy ?? "manual review";
+    routes.push(`Apply deploy policy before release movement: ${policy}.`);
+  }
+  if (hazardLevel === "clear") {
+    routes.push("Keep this repo on normal observation cadence.");
+  }
+
+  return routes;
+}
+
+function buildActions(
+  repo: RepoReport,
+  failedRuns: RepoReport["runs"],
+  activeRuns: RepoReport["runs"],
+  hazardLevel: HazardLevel,
+): RepoAction[] {
+  const actions: RepoAction[] = [];
+
+  if (repo.errors.length > 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: "urgent",
+      reason: "GitHub collection failed, so the field map is incomplete.",
+      command: "Restore GitHub API access or repository permissions.",
+      links: [],
+    });
+  }
+
+  if (failedRuns.length > 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: "urgent",
+      reason: `${failedRuns.length} recent autopilot run(s) failed or ended non-successfully.`,
+      command: "Inspect failed jobs, patch the root cause, then rerun Autopilot.",
+      links: failedRuns.map((run) => run.html_url),
+    });
+  }
+
+  if (activeRuns.length > 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: "next",
+      reason: `${activeRuns.length} autopilot run(s) are still active.`,
+      command: "Wait for active runs to finish before creating new work.",
+      links: activeRuns.map((run) => run.html_url),
+    });
+  }
+
+  if (repo.runs.length === 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: "next",
+      reason: "No recent Autopilot run was found in the lookback window.",
+      command: "Check workflow naming, scheduling, and repository inclusion.",
+      links: [],
+    });
+  }
+
+  if (repo.openAutopilotPulls.length > 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: repo.openAutopilotPulls.length > 2 ? "urgent" : "next",
+      reason: `${repo.openAutopilotPulls.length} autopilot PR(s) are open.`,
+      command: "Review, merge, or close open autopilot PRs before adding more migration pressure.",
+      links: repo.openAutopilotPulls.map((pull) => pull.html_url),
+    });
+  }
+
+  if (hazardLevel === "clear") {
+    actions.push({
+      repo: repo.repo,
+      priority: "observe",
+      reason: "Recent runs are successful and no open autopilot PRs were detected.",
+      command: "Continue normal observation cadence.",
+      links: repo.runs[0] ? [repo.runs[0].html_url] : [],
+    });
+  }
+
+  return actions;
+}
+
+function compareActions(left: RepoAction, right: RepoAction): number {
+  const order: Record<ActionPriority, number> = { urgent: 0, next: 1, observe: 2 };
+  return order[left.priority] - order[right.priority] || left.repo.localeCompare(right.repo);
+}
+
+async function buildCodexReport(snapshot: Snapshot, fieldMap: FieldMap, options: Options): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for Codex report generation");
@@ -421,24 +831,27 @@ async function buildCodexReport(snapshot: Snapshot, options: Options): Promise<s
     workingDirectory: process.cwd(),
   });
 
-  const result = await thread.run(`You are writing an operational status report for Caretta autopilot runs.
+  const result = await thread.run(`You are writing a Geodynamo operational field report for Caretta autopilot navigation.
 
-Use only the JSON snapshot below. Do not browse or infer facts outside it.
+Use only the JSON snapshot and field map below. Do not browse or infer facts outside them.
 Write concise GitHub-flavored Markdown suitable for a CI job summary.
 Lead with a brief fleet summary, then one section per repo.
-Call out failures, stale/missing runs, open autopilot PRs, recurring failed jobs or steps, and concrete next actions.
+Call out blocked routes, watch routes, stale/missing runs, open autopilot PRs, recurring failed jobs or steps, and concrete next actions.
 Include run links where useful.
 
 Snapshot:
 ${JSON.stringify(snapshot, null, 2)}
+
+Field map:
+${JSON.stringify(fieldMap, null, 2)}
 `);
 
   return result.finalResponse.trim();
 }
 
-function buildFallbackReport(snapshot: Snapshot, codexError?: string): string {
+function buildFallbackReport(snapshot: Snapshot, fieldMap: FieldMap, codexError?: string): string {
   const lines = [
-    "# Caretta Autopilot Report",
+    "# Geodynamo Field Report",
     "",
     `Generated: ${snapshot.generatedAt}`,
     `Workflow: ${snapshot.workflowName}`,
@@ -450,24 +863,34 @@ function buildFallbackReport(snapshot: Snapshot, codexError?: string): string {
     lines.push("```text", codexError, "```", "");
   }
 
-  const allRuns = snapshot.repos.flatMap((repo) => repo.runs);
-  const failedRuns = allRuns.filter((run) => run.conclusion && run.conclusion !== "success");
-  const activeRuns = allRuns.filter((run) => run.status !== "completed");
-  const openPulls = snapshot.repos.reduce((count, repo) => count + repo.openAutopilotPulls.length, 0);
-
   lines.push(
     "## Fleet Summary",
     "",
-    `- Repositories: ${snapshot.repos.length}`,
-    `- Recent autopilot runs: ${allRuns.length}`,
-    `- Failed or non-success runs: ${failedRuns.length}`,
-    `- Active runs: ${activeRuns.length}`,
-    `- Open autopilot PRs: ${openPulls}`,
+    `- Projects: ${fieldMap.summary.projects}`,
+    `- Recent autopilot runs: ${fieldMap.summary.recentRuns}`,
+    `- Failed or non-success runs: ${fieldMap.summary.failedRuns}`,
+    `- Active runs: ${fieldMap.summary.activeRuns}`,
+    `- Open autopilot PRs: ${fieldMap.summary.openAutopilotPulls}`,
+    `- Blocked/watch/clear: ${fieldMap.summary.blockedProjects}/${fieldMap.summary.watchedProjects}/${fieldMap.summary.clearProjects}`,
     "",
   );
 
   for (const repo of snapshot.repos) {
+    const field = fieldMap.projects.find((project) => project.repo === repo.repo);
     lines.push(`## ${repo.repo}`, "");
+
+    if (field) {
+      lines.push(`Field: ${field.hazardLevel}`);
+      if (field.hazards.length > 0) {
+        lines.push(`Hazards: ${field.hazards.join(", ")}`);
+      }
+      if (field.drift.previousGeneratedAt) {
+        lines.push(
+          `Drift: open PRs ${formatDelta(field.drift.openPullDelta)}, failures ${formatDelta(field.drift.failureDelta)}, latest run changed ${formatNullableBoolean(field.drift.latestRunChanged)}`,
+        );
+      }
+      lines.push("");
+    }
 
     if (repo.errors.length > 0) {
       lines.push("Collector errors:");
@@ -502,6 +925,20 @@ function buildFallbackReport(snapshot: Snapshot, codexError?: string): string {
       }
       lines.push("");
     }
+
+    if (field && field.routes.length > 0) {
+      lines.push("Routes:");
+      for (const route of field.routes) lines.push(`- ${route}`);
+      lines.push("");
+    }
+  }
+
+  if (fieldMap.actions.length > 0) {
+    lines.push("## Action Plan", "");
+    for (const action of fieldMap.actions) {
+      lines.push(`- ${action.priority}: ${action.repo} - ${action.command}`);
+    }
+    lines.push("");
   }
 
   return `${lines.join("\n").trim()}\n`;
@@ -517,13 +954,135 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
 }
 
-async function writeOutputs(report: string, snapshot: Snapshot, options: Options) {
+function formatDelta(value: number | null): string {
+  if (value === null) return "n/a";
+  if (value > 0) return `+${value}`;
+  return String(value);
+}
+
+function formatNullableBoolean(value: boolean | null): string {
+  if (value === null) return "n/a";
+  return value ? "yes" : "no";
+}
+
+type StateRow = {
+  repo: string;
+  generated_at: string;
+  latest_run_id: number | null;
+  latest_run_conclusion: string | null;
+  latest_run_created_at: string | null;
+  open_pull_count: number;
+  failure_count: number;
+  hazard_level: string;
+};
+
+type StateStore = {
+  previous: Map<RepoSlug, PreviousRepoState>;
+  save: (fieldMap: FieldMap) => void;
+  close: () => void;
+};
+
+function openStateStore(path: string): StateStore {
+  const db = new Database(path);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repo_state (
+      repo TEXT PRIMARY KEY,
+      generated_at TEXT NOT NULL,
+      latest_run_id INTEGER,
+      latest_run_conclusion TEXT,
+      latest_run_created_at TEXT,
+      open_pull_count INTEGER NOT NULL,
+      failure_count INTEGER NOT NULL,
+      hazard_level TEXT NOT NULL,
+      field_json TEXT NOT NULL
+    )
+  `);
+
+  const rows = db.query("SELECT * FROM repo_state").all() as StateRow[];
+  const previous = new Map<RepoSlug, PreviousRepoState>();
+  for (const row of rows) {
+    previous.set(parseRepo(row.repo), {
+      repo: parseRepo(row.repo),
+      generatedAt: row.generated_at,
+      latestRunId: row.latest_run_id,
+      latestRunConclusion: row.latest_run_conclusion,
+      latestRunCreatedAt: row.latest_run_created_at,
+      openPullCount: row.open_pull_count,
+      failureCount: row.failure_count,
+      hazardLevel: parseHazardLevel(row.hazard_level),
+    });
+  }
+
+  const statement = db.prepare(`
+    INSERT INTO repo_state (
+      repo,
+      generated_at,
+      latest_run_id,
+      latest_run_conclusion,
+      latest_run_created_at,
+      open_pull_count,
+      failure_count,
+      hazard_level,
+      field_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(repo) DO UPDATE SET
+      generated_at = excluded.generated_at,
+      latest_run_id = excluded.latest_run_id,
+      latest_run_conclusion = excluded.latest_run_conclusion,
+      latest_run_created_at = excluded.latest_run_created_at,
+      open_pull_count = excluded.open_pull_count,
+      failure_count = excluded.failure_count,
+      hazard_level = excluded.hazard_level,
+      field_json = excluded.field_json
+  `);
+
+  return {
+    previous,
+    save(fieldMap) {
+      for (const project of fieldMap.projects) {
+        statement.run(
+          project.repo,
+          fieldMap.generatedAt,
+          project.signals.latestRun?.id ?? null,
+          project.signals.latestRun?.conclusion ?? null,
+          project.signals.latestRun?.createdAt ?? null,
+          project.signals.openAutopilotPulls,
+          project.signals.failedRuns,
+          project.hazardLevel,
+          JSON.stringify(project),
+        );
+      }
+    },
+    close() {
+      db.close();
+    },
+  };
+}
+
+function parseHazardLevel(value: string): HazardLevel {
+  if (value === "clear" || value === "watch" || value === "blocked") return value;
+  return "watch";
+}
+
+async function writeOutputs(report: string, snapshot: Snapshot, fieldMap: FieldMap, options: Options) {
   if (options.output) {
     await Bun.write(options.output, report);
   }
 
   if (options.jsonOutput) {
     await Bun.write(options.jsonOutput, `${JSON.stringify(snapshot, null, 2)}\n`);
+  }
+
+  if (options.fieldOutput) {
+    await Bun.write(options.fieldOutput, `${JSON.stringify(fieldMap, null, 2)}\n`);
+  }
+
+  if (options.planOutput) {
+    await Bun.write(options.planOutput, `${JSON.stringify({
+      generatedAt: fieldMap.generatedAt,
+      actions: fieldMap.actions,
+    }, null, 2)}\n`);
   }
 
   const stepSummary = process.env.GITHUB_STEP_SUMMARY;
@@ -534,25 +1093,30 @@ async function writeOutputs(report: string, snapshot: Snapshot, options: Options
 
 async function main() {
   const options = await parseArgs(process.argv.slice(2));
+  const state = options.noState || !options.statePath ? null : openStateStore(options.statePath);
   const snapshot: Snapshot = {
     generatedAt: new Date().toISOString(),
     workflowName: options.workflowName,
-    repos: await Promise.all(options.repos.map((repo) => collectRepo(repo, options))),
+    repos: await Promise.all(options.projects.map((project) => collectRepo(project, options))),
   };
+  const fieldMap = buildFieldMap(snapshot, state?.previous ?? new Map());
 
   let report: string;
   if (options.noCodex) {
-    report = buildFallbackReport(snapshot);
+    report = buildFallbackReport(snapshot, fieldMap);
   } else {
     try {
-      report = await buildCodexReport(snapshot, options);
+      report = await buildCodexReport(snapshot, fieldMap, options);
     } catch (error) {
       if (options.failOnCodexError) throw error;
-      report = buildFallbackReport(snapshot, errorMessage(error));
+      report = buildFallbackReport(snapshot, fieldMap, errorMessage(error));
     }
   }
 
-  await writeOutputs(report, snapshot, options);
+  state?.save(fieldMap);
+  state?.close();
+
+  await writeOutputs(report, snapshot, fieldMap, options);
   console.log(report);
 }
 

@@ -5,8 +5,11 @@ node_modules/
 out/
 dist/
 *.tgz
-autopilot-report.md
-autopilot-snapshot.json
+geodynamo-report.md
+geodynamo-snapshot.json
+geodynamo-field-map.json
+geodynamo-action-plan.json
+geodynamo-state.sqlite*
 
 # code coverage
 coverage/

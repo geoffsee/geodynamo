@@ -1,4 +1,4 @@
-name: Autopilot Report
+name: Geodynamo Report
 
 on:
   workflow_dispatch:
@@ -15,10 +15,10 @@ permissions:
 
 jobs:
   report:
-    name: Generate Caretta autopilot report
+    name: Generate Geodynamo field report
     runs-on: ubuntu-latest
     steps:
-      - name: Check out reporter
+      - name: Check out geodynamo
         uses: actions/checkout@v4
 
       - name: Set up Bun
@@ -36,7 +36,9 @@ jobs:
       - name: Upload report artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: autopilot-report
+          name: geodynamo-report
           path: |
-            autopilot-report.md
-            autopilot-snapshot.json
+            geodynamo-report.md
+            geodynamo-snapshot.json
+            geodynamo-field-map.json
+            geodynamo-action-plan.json

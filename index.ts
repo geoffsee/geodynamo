@@ -404,7 +404,12 @@ function errorMessage(error: unknown): string {
 }
 
 async function buildCodexReport(snapshot: Snapshot, options: Options): Promise<string> {
-  const codex = new Codex();
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for Codex report generation");
+  }
+
+  const codex = new Codex({ apiKey });
   const thread = codex.startThread({
     model: options.model,
     modelReasoningEffort: options.reasoning,

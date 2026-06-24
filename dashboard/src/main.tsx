@@ -25,9 +25,21 @@ type Summary = {
   failedRuns: number;
   activeRuns: number;
   openAutopilotPulls: number;
+  openIssues: number;
   blockedProjects: number;
   watchedProjects: number;
   clearProjects: number;
+};
+
+type Issue = {
+  title: string;
+  html_url: string;
+  number: number;
+  state: string;
+  user?: { login?: string };
+  labels?: Array<{ name?: string }>;
+  created_at: string;
+  updated_at: string;
 };
 
 type RepoAction = {
@@ -65,8 +77,10 @@ type RepoField = {
     failedRuns: number;
     activeRuns: number;
     openAutopilotPulls: number;
+    openIssues: number;
     collectionErrors: number;
   };
+  currentIssues: Issue[];
   hazards: string[];
   hazardLevel: HazardLevel;
   drift: {
@@ -99,6 +113,7 @@ type HistoryProject = {
   failedRuns: number;
   activeRuns: number;
   openAutopilotPulls: number;
+  openIssues: number;
   latestRunId: number | null;
   actionPriorities: ActionPriority[];
 };
@@ -135,6 +150,7 @@ const EMPTY_SUMMARY: Summary = {
   failedRuns: 0,
   activeRuns: 0,
   openAutopilotPulls: 0,
+  openIssues: 0,
   blockedProjects: 0,
   watchedProjects: 0,
   clearProjects: 0,
@@ -280,6 +296,7 @@ function SummaryStrip({ summary }: { summary: Summary }) {
     { label: "Failed runs", value: summary.failedRuns, icon: <Zap size={18} />, tone: "blocked" },
     { label: "Active runs", value: summary.activeRuns, icon: <Clock3 size={18} />, tone: "active" },
     { label: "Open PRs", value: summary.openAutopilotPulls, icon: <GitPullRequest size={18} />, tone: "pr" },
+    { label: "Issues", value: summary.openIssues ?? 0, icon: <AlertTriangle size={18} />, tone: "issue" },
   ] as const;
 
   return (
@@ -439,6 +456,7 @@ function ProjectCard({ project }: { project: RepoField }) {
           <Signal label="Failed" value={project.signals.failedRuns} />
           <Signal label="Active" value={project.signals.activeRuns} />
           <Signal label="PRs" value={project.signals.openAutopilotPulls} />
+          <Signal label="Issues" value={project.signals.openIssues} />
           <Signal label="Errors" value={project.signals.collectionErrors} />
         </div>
 
@@ -460,6 +478,7 @@ function ProjectCard({ project }: { project: RepoField }) {
       <div className="project-side">
         <TagGroup title="Hazards" values={project.hazards} empty="none" />
         <TagGroup title="Routes" values={project.routes.slice(0, 2)} empty="normal cadence" />
+        <IssueList issues={project.currentIssues ?? []} />
         <LinkStrip links={actionLinks} />
       </div>
     </article>
@@ -495,6 +514,26 @@ function TagGroup({ title, values, empty }: { title: string; values: string[]; e
   );
 }
 
+function IssueList({ issues }: { issues: Issue[] }) {
+  return (
+    <div className="issue-list">
+      <span>Current issues</span>
+      {issues.length === 0 ? (
+        <em>none</em>
+      ) : (
+        <div>
+          {issues.slice(0, 4).map((issue) => (
+            <a href={issue.html_url} key={issue.html_url} className="issue-link">
+              <strong>#{issue.number}</strong>
+              <span>{issue.title}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LinkStrip({ links }: { links: string[] }) {
   if (links.length === 0) return null;
 
@@ -524,6 +563,7 @@ function historyFromCurrent(fieldMap: FieldMap): HistorySnapshot {
       failedRuns: project.signals.failedRuns,
       activeRuns: project.signals.activeRuns,
       openAutopilotPulls: project.signals.openAutopilotPulls,
+      openIssues: project.signals.openIssues ?? 0,
       latestRunId: project.signals.latestRun?.id ?? null,
       actionPriorities: compactActionPriorities(project.actions),
     })),
@@ -542,6 +582,7 @@ function githubRepoUrl(repo: string): string {
 function linkLabel(link: string, index: number): string {
   if (link.includes("/actions/runs/")) return "Run";
   if (link.includes("/pull/")) return "PR";
+  if (link.includes("/issues/")) return "Issue";
   return `Link ${index + 1}`;
 }
 

@@ -32,6 +32,14 @@
       "workflowNames": ["Autopilot"],
       "owners": [],
       "allowedActions": ["observe", "report"]
+    },
+    {
+      "repo": "geoffsee/tx-monitor",
+      "priority": "normal",
+      "risk": "medium",
+      "workflowNames": ["Autopilot"],
+      "owners": [],
+      "allowedActions": ["observe", "report"]
     }
   ]
 }

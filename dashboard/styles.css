@@ -97,7 +97,7 @@ textarea {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(118px, 1fr));
+  grid-template-columns: repeat(8, minmax(112px, 1fr));
   gap: 10px;
   margin: 18px 0 14px;
 }
@@ -162,6 +162,11 @@ textarea {
 .metric-pr .metric-icon {
   color: #175f71;
   background: #dff2f5;
+}
+
+.metric-issue .metric-icon {
+  color: #815300;
+  background: #fff0c7;
 }
 
 .dashboard-grid {
@@ -477,7 +482,7 @@ textarea {
 
 .signal-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(68px, 1fr));
+  grid-template-columns: repeat(6, minmax(68px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -545,11 +550,52 @@ textarea {
   gap: 6px;
 }
 
+.issue-list {
+  display: grid;
+  gap: 6px;
+}
+
 .tag-group div {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+}
+
+.issue-list > span {
+  display: block;
+  color: #68736d;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.issue-list > div {
+  display: grid;
+  gap: 6px;
+}
+
+.issue-link {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #e4d6b6;
+  border-radius: 7px;
+  color: #3f320d;
+  background: #fffaf0;
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.issue-link:hover {
+  text-decoration: underline;
+}
+
+.issue-link strong,
+.issue-link span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tag-group code {
@@ -567,7 +613,8 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.tag-group em {
+.tag-group em,
+.issue-list em {
   color: #68736d;
   font-size: 0.82rem;
   font-style: normal;

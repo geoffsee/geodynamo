@@ -116,12 +116,25 @@ type PullRequest = {
   auto_merge?: unknown;
 };
 
+type Issue = {
+  title: string;
+  html_url: string;
+  number: number;
+  state: string;
+  user?: { login?: string };
+  labels?: Array<{ name?: string }>;
+  created_at: string;
+  updated_at: string;
+  pull_request?: unknown;
+};
+
 type RepoReport = {
   repo: RepoSlug;
   project: ProjectDescriptor;
   generatedAt: string;
   runs: Array<WorkflowRun & { durationSeconds: number | null; jobs: Job[] }>;
   openAutopilotPulls: PullRequest[];
+  openIssues: Issue[];
   errors: string[];
 };
 
@@ -173,8 +186,10 @@ type RepoField = {
     failedRuns: number;
     activeRuns: number;
     openAutopilotPulls: number;
+    openIssues: number;
     collectionErrors: number;
   };
+  currentIssues: Issue[];
   hazards: string[];
   hazardLevel: HazardLevel;
   drift: {
@@ -197,6 +212,7 @@ type FieldMap = {
     failedRuns: number;
     activeRuns: number;
     openAutopilotPulls: number;
+    openIssues: number;
     blockedProjects: number;
     watchedProjects: number;
     clearProjects: number;
@@ -211,6 +227,7 @@ type HistoryProject = {
   failedRuns: number;
   activeRuns: number;
   openAutopilotPulls: number;
+  openIssues: number;
   latestRunId: number | null;
   actionPriorities: ActionPriority[];
 };
@@ -526,6 +543,7 @@ async function collectRepo(project: ProjectDescriptor, options: Options): Promis
     generatedAt: new Date().toISOString(),
     runs: [],
     openAutopilotPulls: [],
+    openIssues: [],
     errors: [],
   };
 
@@ -552,6 +570,12 @@ async function collectRepo(project: ProjectDescriptor, options: Options): Promis
 
   try {
     report.openAutopilotPulls = await collectOpenPulls(project.repo);
+  } catch (error) {
+    report.errors.push(errorMessage(error));
+  }
+
+  try {
+    report.openIssues = await collectOpenIssues(project.repo);
   } catch (error) {
     report.errors.push(errorMessage(error));
   }
@@ -630,6 +654,26 @@ async function collectOpenPulls(repo: RepoSlug): Promise<PullRequest[]> {
     .slice(0, 10);
 }
 
+async function collectOpenIssues(repo: RepoSlug): Promise<Issue[]> {
+  const response = await githubGet<Issue[]>(
+    `https://api.github.com/repos/${repo}/issues?state=open&per_page=50`,
+  );
+
+  return response
+    .filter((issue) => !issue.pull_request)
+    .map((issue) => ({
+      title: issue.title,
+      html_url: issue.html_url,
+      number: issue.number,
+      state: issue.state,
+      user: issue.user,
+      labels: issue.labels?.map((label) => ({ name: label.name })).filter((label) => Boolean(label.name)),
+      created_at: issue.created_at,
+      updated_at: issue.updated_at,
+    }))
+    .slice(0, 20);
+}
+
 function durationSeconds(start: string | null, end: string | null): number | null {
   if (!start || !end) return null;
   const elapsed = Date.parse(end) - Date.parse(start);
@@ -653,6 +697,7 @@ function buildFieldMap(snapshot: Snapshot, previousStates: Map<RepoSlug, Previou
       failedRuns: projects.reduce((sum, project) => sum + project.signals.failedRuns, 0),
       activeRuns: projects.reduce((sum, project) => sum + project.signals.activeRuns, 0),
       openAutopilotPulls: projects.reduce((sum, project) => sum + project.signals.openAutopilotPulls, 0),
+      openIssues: projects.reduce((sum, project) => sum + project.signals.openIssues, 0),
       blockedProjects: projects.filter((project) => project.hazardLevel === "blocked").length,
       watchedProjects: projects.filter((project) => project.hazardLevel === "watch").length,
       clearProjects: projects.filter((project) => project.hazardLevel === "clear").length,
@@ -695,8 +740,10 @@ function buildRepoField(repo: RepoReport, previous: PreviousRepoState | null): R
       failedRuns: failedRuns.length,
       activeRuns: activeRuns.length,
       openAutopilotPulls: repo.openAutopilotPulls.length,
+      openIssues: repo.openIssues.length,
       collectionErrors: repo.errors.length,
     },
+    currentIssues: repo.openIssues,
     hazards,
     hazardLevel,
     drift: {
@@ -722,12 +769,13 @@ function buildHazards(repo: RepoReport, failedRuns: RepoReport["runs"], activeRu
   if (activeRuns.length > 0) hazards.push("active-autopilot-runs");
   if (repo.openAutopilotPulls.length > 0) hazards.push("open-autopilot-prs");
   if (repo.openAutopilotPulls.length > 2) hazards.push("crowded-autopilot-pr-queue");
+  if (repo.openIssues.length > 0) hazards.push("open-issues");
   return hazards;
 }
 
 function classifyHazards(repo: RepoReport, failedRuns: RepoReport["runs"], activeRuns: RepoReport["runs"]): HazardLevel {
   if (repo.errors.length > 0 || failedRuns.length > 0) return "blocked";
-  if (repo.runs.length === 0 || activeRuns.length > 0 || repo.openAutopilotPulls.length > 0) return "watch";
+  if (repo.runs.length === 0 || activeRuns.length > 0 || repo.openAutopilotPulls.length > 0 || repo.openIssues.length > 0) return "watch";
   return "clear";
 }
 
@@ -753,6 +801,9 @@ function buildRoutes(
   }
   if (repo.openAutopilotPulls.length > 0) {
     routes.push("Review open autopilot PRs; merge ready work or close stale routes.");
+  }
+  if (repo.openIssues.length > 0) {
+    routes.push("Review current issues and route the highest-impact open items.");
   }
   if (repo.project.deploy) {
     const policy = repo.project.deploy.policy ?? "manual review";
@@ -823,6 +874,16 @@ function buildActions(
     });
   }
 
+  if (repo.openIssues.length > 0) {
+    actions.push({
+      repo: repo.repo,
+      priority: "next",
+      reason: `${repo.openIssues.length} current issue(s) are open.`,
+      command: "Review and prioritize current open issues.",
+      links: repo.openIssues.map((issue) => issue.html_url),
+    });
+  }
+
   if (hazardLevel === "clear") {
     actions.push({
       repo: repo.repo,
@@ -865,6 +926,7 @@ Use only the JSON snapshot and field map below. Do not browse or infer facts out
 Write concise GitHub-flavored Markdown suitable for a CI job summary.
 Lead with a brief fleet summary, then one section per repo.
 Call out blocked routes, watch routes, stale/missing runs, open autopilot PRs, recurring failed jobs or steps, and concrete next actions.
+Display current open issues for each repo when present.
 Include run links where useful.
 
 Snapshot:
@@ -899,6 +961,7 @@ function buildFallbackReport(snapshot: Snapshot, fieldMap: FieldMap, codexError?
     `- Failed or non-success runs: ${fieldMap.summary.failedRuns}`,
     `- Active runs: ${fieldMap.summary.activeRuns}`,
     `- Open autopilot PRs: ${fieldMap.summary.openAutopilotPulls}`,
+    `- Current open issues: ${fieldMap.summary.openIssues}`,
     `- Blocked/watch/clear: ${fieldMap.summary.blockedProjects}/${fieldMap.summary.watchedProjects}/${fieldMap.summary.clearProjects}`,
     "",
   );
@@ -950,6 +1013,15 @@ function buildFallbackReport(snapshot: Snapshot, fieldMap: FieldMap, codexError?
       lines.push("Open autopilot PRs:");
       for (const pull of repo.openAutopilotPulls) {
         lines.push(`- [#${pull.number} ${pull.title}](${pull.html_url}) updated ${pull.updated_at}`);
+      }
+      lines.push("");
+    }
+
+    if (repo.openIssues.length > 0) {
+      lines.push("Current issues:");
+      for (const issue of repo.openIssues) {
+        const labels = issue.labels && issue.labels.length > 0 ? ` (${issue.labels.map((label) => label.name).join(", ")})` : "";
+        lines.push(`- [#${issue.number} ${issue.title}](${issue.html_url})${labels} updated ${issue.updated_at}`);
       }
       lines.push("");
     }
@@ -1132,6 +1204,7 @@ function compactHistorySnapshot(fieldMap: FieldMap): HistorySnapshot {
       failedRuns: project.signals.failedRuns,
       activeRuns: project.signals.activeRuns,
       openAutopilotPulls: project.signals.openAutopilotPulls,
+      openIssues: project.signals.openIssues,
       latestRunId: project.signals.latestRun?.id ?? null,
       actionPriorities: compactActionPriorities(project.actions),
     })),

@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "report": "bun run index.ts",
-    "report:ci": "bun run index.ts --output geodynamo-report.md --json-output geodynamo-snapshot.json --field-output geodynamo-field-map.json --plan-output geodynamo-action-plan.json --history-output geodynamo-history.json",
+    "report:ci": "bun run index.ts --output geodynamo-report.md --json-output geodynamo-snapshot.json --field-output geodynamo-field-map.json --plan-output geodynamo-action-plan.json --history-output geodynamo-history.json --contexts-output contexts",
     "build:dashboard": "bun run dashboard/build.ts",
     "check": "bun tsc --noEmit"
   },

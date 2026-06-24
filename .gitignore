@@ -11,6 +11,7 @@ geodynamo-field-map.json
 geodynamo-action-plan.json
 geodynamo-history.json
 geodynamo-state.sqlite*
+contexts/
 
 # code coverage
 coverage/

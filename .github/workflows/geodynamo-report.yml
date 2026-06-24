@@ -6,7 +6,8 @@ on:
 #    branches:
 #      - main
   schedule:
-    - cron: "15 */6 * * *"
+    # Tracked Caretta autopilots run at 17 */6; geodynamo follows at +90 minutes.
+    - cron: "47 1,7,13,19 * * *"
 
 permissions:
   contents: read
@@ -83,6 +84,7 @@ jobs:
             geodynamo-field-map.json
             geodynamo-action-plan.json
             geodynamo-history.json
+            contexts
 
       - name: Build dashboard
         run: bun run build:dashboard
@@ -95,6 +97,7 @@ jobs:
           cp geodynamo-field-map.json dist/dashboard/
           cp geodynamo-action-plan.json dist/dashboard/
           cp geodynamo-history.json dist/dashboard/
+          cp -R contexts dist/dashboard/
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

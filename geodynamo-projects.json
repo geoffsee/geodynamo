@@ -3,6 +3,14 @@
   "limit": 5,
   "days": 7,
   "statePath": "geodynamo-state.sqlite",
+  "coreContextPath": "geodynamo-core-context.md",
+  "factoryContext": {
+    "summary": "This geodynamo instance coordinates a small fleet of Caretta autopilot projects. Keep factory cycles aware of fleet pressure, repeated CI hazards, release constraints, and open autopilot PR queues without making any single project depend on knowledge of the others.",
+    "guidance": [
+      "Use this context only during Caretta factory cycles.",
+      "Prefer work that reduces fleet-wide operational drag before generating new feature pressure."
+    ]
+  },
   "projects": [
     {
       "repo": "geoffsee/cortex-enigma",
@@ -18,12 +26,7 @@
       "risk": "medium",
       "workflowNames": ["Autopilot"],
       "owners": [],
-      "allowedActions": ["observe", "report"],
-      "deploy": {
-        "environment": "release",
-        "policy": "review open autopilot PRs before release tagging",
-        "url": "https://github.com/geoffsee/midi-vibe/actions/workflows/release.yml"
-      }
+      "allowedActions": ["observe", "report"]
     },
     {
       "repo": "geoffsee/bevy-osc-app",

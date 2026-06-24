@@ -1,5 +1,6 @@
 import { Codex, type ModelReasoningEffort } from "@openai/codex-sdk";
 import { Database } from "bun:sqlite";
+import { mkdir } from "node:fs/promises";
 
 type RepoSlug = `${string}/${string}`;
 type Priority = "low" | "normal" | "high";
@@ -14,6 +15,7 @@ type ProjectDescriptor = {
   workflowNames: string[];
   owners: string[];
   allowedActions: string[];
+  factoryContext: string[];
   deploy?: {
     environment?: string;
     policy?: string;
@@ -23,6 +25,8 @@ type ProjectDescriptor = {
 
 type Options = {
   projects: ProjectDescriptor[];
+  factoryContext: FactoryContextConfig;
+  coreContextPath: string;
   configPath: string;
   workflowName: string;
   limit: number;
@@ -34,6 +38,7 @@ type Options = {
   fieldOutput?: string;
   planOutput?: string;
   historyOutput?: string;
+  contextsOutput?: string;
   statePath?: string;
   noState: boolean;
   noCodex: boolean;
@@ -43,10 +48,17 @@ type Options = {
 type ConfigFile = {
   projects?: Array<string | ConfigProject>;
   repos?: string[];
+  factoryContext?: FactoryContextConfig;
+  coreContextPath?: string;
   workflowName?: string;
   limit?: number;
   days?: number;
   statePath?: string;
+};
+
+type FactoryContextConfig = {
+  summary?: string;
+  guidance?: string[];
 };
 
 type ConfigProject = {
@@ -57,6 +69,7 @@ type ConfigProject = {
   workflowNames?: string[];
   owners?: string[];
   allowedActions?: string[];
+  factoryContext?: string | string[];
   deploy?: {
     environment?: string;
     policy?: string;
@@ -170,6 +183,7 @@ type RepoField = {
   workflowNames: string[];
   owners: string[];
   allowedActions: string[];
+  factoryContext: string[];
   deploy?: ProjectDescriptor["deploy"];
   signals: {
     latestRun: {
@@ -244,6 +258,41 @@ type HistoryOutput = {
   snapshots: HistorySnapshot[];
 };
 
+type ProjectContextOutput = {
+  schema: "geodynamo.project-context.v1";
+  generatedAt: string;
+  scope: "caretta-factory-cycle-only";
+  source: "geodynamo";
+  repo: RepoSlug;
+  projectName: string;
+  coreContextPath: string;
+  context: string;
+  title: string;
+  featureSets: string[];
+  rationale: string;
+  guardrails: string[];
+  priority: Priority;
+  risk: RiskLevel;
+  hazardLevel: HazardLevel;
+  hazards: string[];
+  signals: RepoField["signals"];
+  routes: string[];
+  actions: RepoAction[];
+};
+
+type CodexProjectContext = {
+  repo: string;
+  context: string;
+  title?: string;
+  featureSets?: unknown;
+  rationale?: string;
+  guardrails?: unknown;
+};
+
+type CodexProjectContextsResponse = {
+  projects: CodexProjectContext[];
+};
+
 const DEFAULT_PROJECTS: ProjectDescriptor[] = [
   createProjectDescriptor("geoffsee/cortex-enigma"),
   createProjectDescriptor("geoffsee/midi-vibe"),
@@ -258,6 +307,7 @@ const CARETTA_IDENTIFIERS = [
 ];
 
 const DEFAULT_CONFIG_PATH = "geodynamo-projects.json";
+const DEFAULT_CORE_CONTEXT_PATH = "geodynamo-core-context.md";
 const DEFAULT_STATE_PATH = "geodynamo-state.sqlite";
 const HISTORY_RETENTION_DAYS = 30;
 
@@ -266,6 +316,8 @@ async function parseArgs(argv: string[]): Promise<Options> {
   const config = await loadConfig(preflight.configPath);
   const options: Options = {
     projects: parseConfigProjects(config, preflight.configPath),
+    factoryContext: parseFactoryContextConfig(config.factoryContext),
+    coreContextPath: config.coreContextPath ?? DEFAULT_CORE_CONTEXT_PATH,
     configPath: preflight.configPath,
     workflowName: config.workflowName ?? "Autopilot",
     limit: config.limit ?? 5,
@@ -333,6 +385,12 @@ async function parseArgs(argv: string[]): Promise<Options> {
         break;
       case "--history-output":
         options.historyOutput = next();
+        break;
+      case "--contexts-output":
+        options.contextsOutput = next();
+        break;
+      case "--core-context":
+        options.coreContextPath = next();
         break;
       case "--state":
         options.statePath = next();
@@ -432,6 +490,7 @@ function parseConfigProject(project: string | ConfigProject, defaultWorkflowName
     workflowNames,
     owners: project.owners ?? [],
     allowedActions: project.allowedActions ?? ["observe", "report"],
+    factoryContext: normalizeStringList(project.factoryContext, "project.factoryContext"),
     deploy: project.deploy,
   };
 }
@@ -444,7 +503,27 @@ function createProjectDescriptor(repo: RepoSlug, workflowName = "Autopilot"): Pr
     workflowNames: [workflowName],
     owners: [],
     allowedActions: ["observe", "report"],
+    factoryContext: [],
   };
+}
+
+function parseFactoryContextConfig(value: FactoryContextConfig | undefined): FactoryContextConfig {
+  if (!value) return { guidance: [] };
+  return {
+    summary: typeof value.summary === "string" ? value.summary.trim() : undefined,
+    guidance: normalizeStringList(value.guidance, "factoryContext.guidance"),
+  };
+}
+
+function normalizeStringList(value: string | string[] | undefined, name: string): string[] {
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values.map((item) => {
+    if (typeof item !== "string") {
+      throw new Error(`${name} entries must be strings`);
+    }
+    return item.trim();
+  }).filter((item) => item.length > 0);
 }
 
 function parsePriority(value: string | undefined): Priority {
@@ -507,6 +586,8 @@ Options:
   --field-output path             Write agent field map JSON to a file
   --plan-output path              Write action plan JSON to a file
   --history-output path           Write compact field history JSON to a file
+  --contexts-output dir           Write Caretta project contexts under dir/<project-name>/context.json
+  --core-context path             Markdown policy used by Codex for project contexts
   --state path                    SQLite state path, default: geodynamo-state.sqlite
   --no-state                      Do not read or write durable state
   --no-codex                      Skip Codex SDK and emit deterministic report
@@ -733,6 +814,7 @@ function buildRepoField(repo: RepoReport, previous: PreviousRepoState | null): R
     workflowNames: repo.project.workflowNames,
     owners: repo.project.owners,
     allowedActions: repo.project.allowedActions,
+    factoryContext: repo.project.factoryContext,
     deploy: repo.project.deploy,
     signals: {
       latestRun: latestRunSignal,
@@ -1224,6 +1306,160 @@ function buildHistoryOutput(generatedAt: string, snapshots: HistorySnapshot[]): 
   };
 }
 
+async function loadCoreContext(path: string): Promise<string> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    throw new Error(`Core context document not found: ${path}`);
+  }
+  const text = (await file.text()).trim();
+  if (!text) {
+    throw new Error(`Core context document is empty: ${path}`);
+  }
+  return text;
+}
+
+async function buildCodexProjectContexts(fieldMap: FieldMap, options: Options): Promise<ProjectContextOutput[]> {
+  if (!options.contextsOutput) return [];
+  if (options.noCodex) {
+    throw new Error("--contexts-output requires Codex SDK; remove --no-codex or omit context generation");
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for Codex project context generation");
+  }
+
+  const coreContext = await loadCoreContext(options.coreContextPath);
+  const codex = new Codex({ apiKey });
+  const thread = codex.startThread({
+    model: options.model,
+    modelReasoningEffort: options.reasoning,
+    sandboxMode: "read-only",
+    approvalPolicy: "never",
+    networkAccessEnabled: false,
+    webSearchMode: "disabled",
+    skipGitRepoCheck: true,
+    workingDirectory: process.cwd(),
+  });
+
+  const result = await thread.run(`You are generating Caretta factory-cycle context files for a geodynamo-managed project set.
+
+Use the core behavior document as the governing policy. Use only the field map, shared context, and project facts provided below.
+Return only a JSON object with this exact shape:
+{
+  "projects": [
+    {
+      "repo": "owner/name",
+      "title": "short feature-set title",
+      "context": "factory-cycle context for this project",
+      "featureSets": ["feature set name"],
+      "rationale": "why this context fits the current field",
+      "guardrails": ["scope or safety guardrail"]
+    }
+  ]
+}
+
+Rules:
+- Generate exactly one project entry for every fieldMap.projects item.
+- The context is for Caretta factory cycles only.
+- Drive cohesive sets of user-facing features by default.
+- Treat CI, dependency, architecture, and cleanup work as support work unless it directly unlocks user-facing capability.
+- Do not mention other managed repositories inside a project's context.
+- Do not instruct a project to depend on another managed project.
+- Keep each context concise, directive, and ready to pass as CARETTA_CONTEXT.
+
+Core behavior document:
+${coreContext}
+
+Shared geodynamo context:
+${JSON.stringify(options.factoryContext, null, 2)}
+
+Field map:
+${JSON.stringify(fieldMap, null, 2)}
+`);
+
+  const generated = parseCodexContextResponse(result.finalResponse);
+  const generatedByRepo = new Map(
+    generated.projects.map((project) => [project.repo.toLowerCase(), project]),
+  );
+
+  return fieldMap.projects.map((project) => {
+    const generatedProject = generatedByRepo.get(project.repo.toLowerCase());
+    if (!generatedProject?.context?.trim()) {
+      throw new Error(`Codex project context response omitted context for ${project.repo}`);
+    }
+
+    return {
+      schema: "geodynamo.project-context.v1",
+      generatedAt: fieldMap.generatedAt,
+      scope: "caretta-factory-cycle-only",
+      source: "geodynamo",
+      repo: project.repo,
+      projectName: projectNameFromRepo(project.repo),
+      coreContextPath: options.coreContextPath,
+      context: generatedProject.context.trim(),
+      title: generatedProject.title?.trim() || "Factory-cycle feature set",
+      featureSets: normalizeGeneratedList(generatedProject.featureSets),
+      rationale: generatedProject.rationale?.trim() || "",
+      guardrails: normalizeGeneratedList(generatedProject.guardrails),
+      priority: project.priority,
+      risk: project.risk,
+      hazardLevel: project.hazardLevel,
+      hazards: project.hazards,
+      signals: project.signals,
+      routes: project.routes,
+      actions: project.actions,
+    };
+  });
+}
+
+function parseCodexContextResponse(response: string): CodexProjectContextsResponse {
+  const parsed = JSON.parse(extractJsonObject(response)) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.projects)) {
+    throw new Error("Codex project context response must contain a projects array");
+  }
+
+  return {
+    projects: parsed.projects.map((project) => {
+      if (!isRecord(project) || typeof project.repo !== "string" || typeof project.context !== "string") {
+        throw new Error("Each Codex project context must include repo and context strings");
+      }
+      return project as CodexProjectContext;
+    }),
+  };
+}
+
+function extractJsonObject(response: string): string {
+  const trimmed = response.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
+
+  throw new Error("Codex project context response did not contain a JSON object");
+}
+
+function normalizeGeneratedList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function projectNameFromRepo(repo: RepoSlug): string {
+  const name = repo.split("/")[1] ?? repo;
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function parseHistorySnapshot(row: HistoryRow): HistorySnapshot {
   const parsed = JSON.parse(row.snapshot_json) as Partial<HistorySnapshot>;
   return {
@@ -1244,6 +1480,7 @@ async function writeOutputs(
   snapshot: Snapshot,
   fieldMap: FieldMap,
   history: HistoryOutput,
+  projectContexts: ProjectContextOutput[],
   options: Options,
 ) {
   if (options.output) {
@@ -1269,9 +1506,21 @@ async function writeOutputs(
     await Bun.write(options.historyOutput, `${JSON.stringify(history, null, 2)}\n`);
   }
 
+  if (options.contextsOutput) {
+    await writeProjectContexts(options.contextsOutput, projectContexts);
+  }
+
   const stepSummary = process.env.GITHUB_STEP_SUMMARY;
   if (stepSummary) {
     await Bun.write(stepSummary, report);
+  }
+}
+
+async function writeProjectContexts(baseDir: string, contexts: ProjectContextOutput[]) {
+  for (const context of contexts) {
+    const dir = `${baseDir}/${context.projectName}`;
+    await mkdir(dir, { recursive: true });
+    await Bun.write(`${dir}/context.json`, `${JSON.stringify(context, null, 2)}\n`);
   }
 }
 
@@ -1284,6 +1533,7 @@ async function main() {
     repos: await Promise.all(options.projects.map((project) => collectRepo(project, options))),
   };
   const fieldMap = buildFieldMap(snapshot, state?.previous ?? new Map());
+  const projectContexts = await buildCodexProjectContexts(fieldMap, options);
 
   let report: string;
   if (options.noCodex) {
@@ -1303,7 +1553,7 @@ async function main() {
     : buildHistoryOutput(snapshot.generatedAt, [compactHistorySnapshot(fieldMap)]);
   state?.close();
 
-  await writeOutputs(report, snapshot, fieldMap, history, options);
+  await writeOutputs(report, snapshot, fieldMap, history, projectContexts, options);
   console.log(report);
 }
 

@@ -1520,7 +1520,10 @@ async function writeOutputs(
 
   const stepSummary = process.env.GITHUB_STEP_SUMMARY;
   if (stepSummary) {
-    await Bun.write(stepSummary, report);
+    const usageLine = !options.noCodex
+      ? `\n\n**Total Codex token usage:** ${totalInputTokens} input + ${totalOutputTokens} output = ${totalInputTokens + totalOutputTokens} tokens`
+      : "";
+    await Bun.write(stepSummary, report + usageLine);
   }
 }
 
@@ -1542,7 +1545,6 @@ async function main() {
   };
   const fieldMap = buildFieldMap(snapshot, state?.previous ?? new Map());
   const projectContexts = await buildCodexProjectContexts(fieldMap, options);
-  // Note: buildCodexProjectContexts already logs its own usage; we could aggregate it here too if needed
 
   let report: string;
   let totalInputTokens = 0;
@@ -1578,7 +1580,8 @@ async function main() {
   console.log(report);
 
   if (!options.noCodex) {
-    console.log(`\nTotal Codex token usage: ${totalInputTokens} input + ${totalOutputTokens} output = ${totalInputTokens + totalOutputTokens} tokens`);
+    const totalUsage = `Total Codex token usage: ${totalInputTokens} input + ${totalOutputTokens} output = ${totalInputTokens + totalOutputTokens} tokens`;
+    console.log(`\n${totalUsage}`);
   }
 }
 

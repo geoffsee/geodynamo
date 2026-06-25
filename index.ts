@@ -984,7 +984,7 @@ function compareActions(left: RepoAction, right: RepoAction): number {
   return order[left.priority] - order[right.priority] || left.repo.localeCompare(right.repo);
 }
 
-async function buildCodexReport(snapshot: Snapshot, fieldMap: FieldMap, options: Options): Promise<string> {
+async function buildCodexReport(snapshot: Snapshot, fieldMap: FieldMap, options: Options): Promise<string | { finalResponse: string; usage?: { input_tokens: number; output_tokens: number } }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for Codex report generation");
@@ -1018,7 +1018,11 @@ Field map:
 ${JSON.stringify(fieldMap, null, 2)}
 `);
 
-  return result.finalResponse.trim();
+  if (result.usage) {
+    console.log(`Codex report usage: ${result.usage.input_tokens} input + ${result.usage.output_tokens} output tokens (${result.usage.input_tokens + result.usage.output_tokens} total)`);
+  }
+
+  return result;
 }
 
 function buildFallbackReport(snapshot: Snapshot, fieldMap: FieldMap, codexError?: string): string {
@@ -1378,6 +1382,10 @@ Field map:
 ${JSON.stringify(fieldMap, null, 2)}
 `);
 
+  if (result.usage) {
+    console.log(`Codex contexts usage: ${result.usage.input_tokens} input + ${result.usage.output_tokens} output tokens (${result.usage.input_tokens + result.usage.output_tokens} total)`);
+  }
+
   const generated = parseCodexContextResponse(result.finalResponse);
   const generatedByRepo = new Map(
     generated.projects.map((project) => [project.repo.toLowerCase(), project]),
@@ -1534,13 +1542,26 @@ async function main() {
   };
   const fieldMap = buildFieldMap(snapshot, state?.previous ?? new Map());
   const projectContexts = await buildCodexProjectContexts(fieldMap, options);
+  // Note: buildCodexProjectContexts already logs its own usage; we could aggregate it here too if needed
 
   let report: string;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
   if (options.noCodex) {
     report = buildFallbackReport(snapshot, fieldMap);
   } else {
     try {
-      report = await buildCodexReport(snapshot, fieldMap, options);
+      const reportResult = await buildCodexReport(snapshot, fieldMap, options);
+      if (typeof reportResult === "string") {
+        report = reportResult.trim();
+      } else {
+        report = reportResult.finalResponse.trim();
+        if (reportResult.usage) {
+          totalInputTokens += reportResult.usage.input_tokens;
+          totalOutputTokens += reportResult.usage.output_tokens;
+        }
+      }
     } catch (error) {
       if (options.failOnCodexError) throw error;
       report = buildFallbackReport(snapshot, fieldMap, errorMessage(error));
@@ -1555,6 +1576,10 @@ async function main() {
 
   await writeOutputs(report, snapshot, fieldMap, history, projectContexts, options);
   console.log(report);
+
+  if (!options.noCodex) {
+    console.log(`\nTotal Codex token usage: ${totalInputTokens} input + ${totalOutputTokens} output = ${totalInputTokens + totalOutputTokens} tokens`);
+  }
 }
 
 main().catch((error) => {

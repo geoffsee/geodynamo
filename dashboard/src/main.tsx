@@ -315,11 +315,29 @@ function SummaryStrip({ summary }: { summary: Summary }) {
 }
 
 function ActionQueue({ actions }: { actions: RepoAction[] }) {
+  // Deduplicate by repo: show only the highest-priority action per repo
+  // (prevents the same repo like tx-monitor from appearing in multiple columns)
+  const dedupedActions = useMemo(() => {
+    const byRepo = new Map<string, RepoAction>();
+    const order: Record<ActionPriority, number> = { urgent: 0, next: 1, observe: 2 };
+
+    for (const action of actions) {
+      const existing = byRepo.get(action.repo);
+      if (!existing || order[action.priority] < order[existing.priority]) {
+        byRepo.set(action.repo, action);
+      }
+    }
+
+    return Array.from(byRepo.values()).sort((a, b) => {
+      return order[a.priority] - order[b.priority] || a.repo.localeCompare(b.repo);
+    });
+  }, [actions]);
+
   const grouped = useMemo(() => ({
-    urgent: actions.filter((action) => action.priority === "urgent"),
-    next: actions.filter((action) => action.priority === "next"),
-    observe: actions.filter((action) => action.priority === "observe"),
-  }), [actions]);
+    urgent: dedupedActions.filter((action) => action.priority === "urgent"),
+    next: dedupedActions.filter((action) => action.priority === "next"),
+    observe: dedupedActions.filter((action) => action.priority === "observe"),
+  }), [dedupedActions]);
 
   return (
     <section className="panel action-panel">

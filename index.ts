@@ -1490,6 +1490,8 @@ async function writeOutputs(
   history: HistoryOutput,
   projectContexts: ProjectContextOutput[],
   options: Options,
+  totalInputTokens: number,
+  totalOutputTokens: number,
 ) {
   if (options.output) {
     await Bun.write(options.output, report);
@@ -1576,7 +1578,7 @@ async function main() {
     : buildHistoryOutput(snapshot.generatedAt, [compactHistorySnapshot(fieldMap)]);
   state?.close();
 
-  await writeOutputs(report, snapshot, fieldMap, history, projectContexts, options);
+  await writeOutputs(report, snapshot, fieldMap, history, projectContexts, options, totalInputTokens, totalOutputTokens);
   console.log(report);
 
   if (!options.noCodex) {

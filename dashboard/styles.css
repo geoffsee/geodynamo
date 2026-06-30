@@ -176,6 +176,12 @@ textarea {
   align-items: start;
 }
 
+.dashboard-side {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
 .activity-panel {
   margin: 0 0 14px;
 }
@@ -270,6 +276,92 @@ textarea {
 
 .activity-legend strong {
   color: #17201d;
+}
+
+.work-focus-panel {
+  min-width: 0;
+}
+
+.work-focus-chart {
+  width: 100%;
+  height: 286px;
+  border: 1px solid #e0e5de;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfcfa, #f5f8f3);
+}
+
+.work-focus-tooltip {
+  display: grid;
+  gap: 6px;
+  min-width: 154px;
+  padding: 9px 10px;
+  border: 1px solid #d6ddd4;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(23, 32, 29, 0.12);
+  color: #26352f;
+  font-size: 0.8rem;
+  font-weight: 820;
+}
+
+.work-focus-tooltip strong {
+  color: #17201d;
+  font-size: 0.84rem;
+}
+
+.work-focus-tooltip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.work-focus-tooltip i,
+.work-focus-row i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.work-focus-tooltip small {
+  color: #68736d;
+  font-size: 0.74rem;
+}
+
+.work-focus-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.work-focus-row {
+  display: grid;
+  grid-template-columns: 10px minmax(112px, 0.52fr) minmax(70px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #35413b;
+  font-size: 0.78rem;
+  font-weight: 830;
+}
+
+.work-focus-track {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e6ebe4;
+}
+
+.work-focus-track b {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+}
+
+.work-focus-row strong {
+  min-width: 36px;
+  color: #17201d;
+  font-size: 0.78rem;
+  text-align: right;
 }
 
 .panel {

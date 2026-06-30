@@ -17,6 +17,11 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar as RechartsRadar,
+  RadarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -153,6 +158,17 @@ type ActivityChartDatum = {
   timestamp: string;
 } & Record<string, number | string>;
 
+type WorkAspectKey = "features" | "techDebt" | "bugs" | "userInterfaces" | "apis";
+
+type WorkAspectDatum = {
+  key: WorkAspectKey;
+  aspect: string;
+  axisLabel: string;
+  score: number;
+  percent: number;
+  fill: string;
+};
+
 type DataState = {
   loading: boolean;
   fieldMap: FieldMap | null;
@@ -184,6 +200,49 @@ const EMPTY_SUMMARY: Summary = {
 };
 
 const REPO_LINE_COLORS = ["#175f71", "#c64332", "#268a5a", "#c98a18", "#6f5ca8", "#8a5a32"];
+const WORK_ASPECTS: Array<{
+  key: WorkAspectKey;
+  label: string;
+  axisLabel: string;
+  fill: string;
+  keywords: string[];
+}> = [
+  {
+    key: "features",
+    label: "Features",
+    axisLabel: "Features",
+    fill: "#175f71",
+    keywords: ["feature", "sprint", "ideation", "product", "plan", "foundation", "capability", "implement", "build", "composition", "roadmap", "workflow", "trust"],
+  },
+  {
+    key: "techDebt",
+    label: "Tech debt",
+    axisLabel: "Tech debt",
+    fill: "#c98a18",
+    keywords: ["tech debt", "tech-debt", "debt", "cleanup", "housekeeping", "refactor", "migration", "dependency", "maintenance", "review", "merge", "close", "collector", "permissions", "access"],
+  },
+  {
+    key: "bugs",
+    label: "Bugs",
+    axisLabel: "Bugs",
+    fill: "#c64332",
+    keywords: ["bug", "bugs", "failed", "failure", "error", "errors", "broken", "fix", "regression", "restore", "root cause", "non-success", "blocked"],
+  },
+  {
+    key: "userInterfaces",
+    label: "User interfaces",
+    axisLabel: "UI",
+    fill: "#6f5ca8",
+    keywords: ["ui", "ux", "uxr", "interface", "interfaces", "frontend", "screen", "view", "dashboard", "design", "accessibility"],
+  },
+  {
+    key: "apis",
+    label: "APIs",
+    axisLabel: "APIs",
+    fill: "#268a5a",
+    keywords: ["api", "apis", "endpoint", "boundary", "contract", "schema", "graphql", "rest", "sdk", "integration"],
+  },
+];
 
 function App() {
   const [data, setData] = useState<DataState>({
@@ -241,7 +300,10 @@ function App() {
           <ActivityGraph history={data.history} current={data.fieldMap} />
           <div className="dashboard-grid">
             <ActionQueue actions={actions} />
-            <TrendPanel history={data.history} current={data.fieldMap} />
+            <div className="dashboard-side">
+              <WorkFocusPanel current={data.fieldMap} />
+              <TrendPanel history={data.history} current={data.fieldMap} />
+            </div>
           </div>
           <ProjectRows projects={data.fieldMap.projects} />
         </>
@@ -359,6 +421,78 @@ function ActivityTooltip({ active, payload, label }: TooltipContentProps) {
           <b>{item.value ?? 0}</b>
         </span>
       ))}
+    </div>
+  );
+}
+
+function WorkFocusPanel({ current }: { current: FieldMap }) {
+  const aspectData = useMemo(() => calculateWorkAspectData(current), [current]);
+
+  return (
+    <section className="panel work-focus-panel">
+      <div className="section-title">
+        <Activity size={18} aria-hidden="true" />
+        Work focus
+      </div>
+      <div className="work-focus-chart" aria-label="Radar chart of project work by aspect">
+        <ResponsiveContainer width="100%" height="100%">
+          <RadarChart data={aspectData} outerRadius="72%" margin={{ top: 12, right: 24, bottom: 12, left: 24 }}>
+            <PolarGrid gridType="polygon" stroke="#d9e0d7" />
+            <PolarAngleAxis
+              dataKey="axisLabel"
+              tick={{ fill: "#59645d", fontSize: 12, fontWeight: 800 }}
+              tickLine={false}
+            />
+            <PolarRadiusAxis
+              angle={90}
+              axisLine={false}
+              domain={[0, 100]}
+              tick={{ fill: "#68736d", fontSize: 10, fontWeight: 700 }}
+              tickCount={5}
+            />
+            <Tooltip content={(props) => <WorkFocusTooltip {...props} />} />
+            <RechartsRadar
+              dataKey="percent"
+              fill="#6f5ca8"
+              fillOpacity={0.36}
+              isAnimationActive={false}
+              name="Work"
+              stroke="#6f5ca8"
+              strokeWidth={2.5}
+            />
+          </RadarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="work-focus-list">
+        {aspectData.map((aspect) => (
+          <div className="work-focus-row" key={aspect.key}>
+            <i style={{ background: aspect.fill }} />
+            <span>{aspect.aspect}</span>
+            <div className="work-focus-track" aria-hidden="true">
+              <b style={{ width: `${aspect.percent}%`, background: aspect.fill }} />
+            </div>
+            <strong>{aspect.percent}%</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkFocusTooltip({ active, payload }: TooltipContentProps) {
+  if (!active || !payload?.length) return null;
+
+  const datum = payload[0]?.payload as WorkAspectDatum | undefined;
+  if (!datum) return null;
+
+  return (
+    <div className="work-focus-tooltip">
+      <strong>{datum.aspect}</strong>
+      <span>
+        <i style={{ background: datum.fill }} />
+        {datum.percent}% focus
+      </span>
+      <small>{formatScore(datum.score)} weighted signal</small>
     </div>
   );
 }
@@ -728,6 +862,101 @@ function StatusPill({ level, label }: { level: HazardLevel; label: string }) {
   return <span className={`status-pill status-${level}`}>{label}</span>;
 }
 
+function calculateWorkAspectData(fieldMap: FieldMap): WorkAspectDatum[] {
+  const scores = emptyWorkAspectScores();
+
+  for (const project of fieldMap.projects) {
+    scores.features += (project.signals.openAutopilotPulls ?? 0) * 1.1;
+    scores.techDebt += (project.signals.openAutopilotPulls ?? 0) * 0.65;
+    scores.features += (project.signals.inFlightCommits ?? 0) * 0.7;
+    scores.bugs += (project.signals.failedRuns ?? 0) * 2.5;
+    scores.bugs += (project.signals.activeRuns ?? 0) * 0.8;
+    scores.bugs += (project.signals.collectionErrors ?? 0) * 2.75;
+
+    for (const hazard of project.hazards) {
+      addWorkAspectSignal(scores, hazard, 1.2);
+    }
+
+    for (const issue of project.currentIssues ?? []) {
+      const issueText = [
+        issue.title,
+        ...(issue.labels ?? []).map((label) => label.name ?? ""),
+      ].join(" ");
+      addWorkAspectSignal(scores, issueText, 4);
+    }
+
+    for (const action of project.actions ?? []) {
+      addWorkAspectSignal(scores, `${action.reason} ${action.command}`, actionPriorityWeight(action.priority));
+    }
+  }
+
+  for (const action of fieldMap.actions ?? []) {
+    addWorkAspectSignal(scores, `${action.reason} ${action.command}`, actionPriorityWeight(action.priority) * 0.75);
+  }
+
+  const total = Math.max(1, Object.values(scores).reduce((sum, score) => sum + score, 0));
+
+  return WORK_ASPECTS.map((aspect) => ({
+    key: aspect.key,
+    aspect: aspect.label,
+    axisLabel: aspect.axisLabel,
+    fill: aspect.fill,
+    score: scores[aspect.key],
+    percent: Math.round((scores[aspect.key] / total) * 100),
+  }));
+}
+
+function emptyWorkAspectScores(): Record<WorkAspectKey, number> {
+  return {
+    features: 0,
+    techDebt: 0,
+    bugs: 0,
+    userInterfaces: 0,
+    apis: 0,
+  };
+}
+
+function addWorkAspectSignal(scores: Record<WorkAspectKey, number>, text: string, weight: number) {
+  const matches = matchedWorkAspects(text);
+  const weightedShare = weight / matches.length;
+
+  for (const key of matches) {
+    scores[key] += weightedShare;
+  }
+}
+
+function matchedWorkAspects(text: string): WorkAspectKey[] {
+  const normalized = text
+    .toLowerCase()
+    .replaceAll("github api", "github access")
+    .replaceAll("api access", "access")
+    .replaceAll(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  const matches = WORK_ASPECTS.filter((aspect) => {
+    return aspect.keywords.some((keyword) => keywordMatches(normalized, keyword));
+  }).map((aspect) => aspect.key);
+
+  return matches.length > 0 ? matches : ["features"];
+}
+
+function keywordMatches(text: string, keyword: string): boolean {
+  const normalizedKeyword = keyword.toLowerCase().replaceAll(/[^a-z0-9]+/g, " ").trim();
+  if (!normalizedKeyword) return false;
+
+  return new RegExp(`(^| )${escapeRegExp(normalizedKeyword)}( |$)`).test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function actionPriorityWeight(priority: ActionPriority): number {
+  if (priority === "urgent") return 3;
+  if (priority === "next") return 2;
+  return 1;
+}
+
 function historyFromCurrent(fieldMap: FieldMap): HistorySnapshot {
   return {
     generatedAt: fieldMap.generatedAt,
@@ -792,6 +1021,13 @@ function formatDelta(value: number | null): string {
   if (value === null) return "baseline";
   if (value > 0) return `+${value}`;
   return String(value);
+}
+
+function formatScore(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: value % 1 === 0 ? 0 : 1,
+  }).format(value);
 }
 
 function formatDrift(drift: RepoField["drift"]): string {

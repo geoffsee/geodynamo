@@ -29,7 +29,7 @@
       "allowedActions": ["observe", "report"]
     },
     {
-      "repo": "geoffsee/bevy-osc-app",
+      "repo": "geoffsee/aurora",
       "priority": "high",
       "risk": "medium",
       "workflowNames": ["Autopilot"],

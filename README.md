@@ -110,6 +110,11 @@ Configure a repository secret named `OPENAI_API_KEY` if CI should generate the
 Codex-written report. Without it, the command will fall back to the
 deterministic report unless `--fail-on-codex-error` is passed.
 
+The report step does not pass the repository-scoped `github.token` to fleet
+collection. Public tracked repositories are read without an auth header; set a
+`GEODYNAMO_GITHUB_TOKEN` secret only when tracking private repositories or when
+you need higher GitHub API limits.
+
 GitHub Pages must be enabled once in repository settings with Source set to
 GitHub Actions before the first dashboard deployment can publish.
 

@@ -232,6 +232,10 @@ type FieldMap = {
     activeRuns: number;
     openAutopilotPulls: number;
     openIssues: number;
+    inFlightCommits: number;
+    oldestAutopilotPrAgeSeconds: number | null;
+    oldestIssueAgeSeconds: number | null;
+    oldestActiveRunAgeSeconds: number | null;
     blockedProjects: number;
     watchedProjects: number;
     clearProjects: number;
@@ -720,7 +724,7 @@ async function collectJobs(jobsUrl: string, errors: string[]): Promise<Job[]> {
 async function collectOpenPulls(repo: RepoSlug): Promise<PullRequest[]> {
   const response = await githubGet<Array<
     Omit<PullRequest, "commits"> & { commits?: number }
-  >(
+  >>(
     `https://api.github.com/repos/${repo}/pulls?state=open&per_page=50`,
   );
 
@@ -791,6 +795,15 @@ function oldestAgeInSeconds(starts: string[], end: string): number | null {
   return oldest;
 }
 
+function maxFinite(values: Array<number | null>): number | null {
+  let max: number | null = null;
+  for (const value of values) {
+    if (value === null) continue;
+    if (max === null || value > max) max = value;
+  }
+  return max;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -809,6 +822,10 @@ function buildFieldMap(snapshot: Snapshot, previousStates: Map<RepoSlug, Previou
       activeRuns: projects.reduce((sum, project) => sum + project.signals.activeRuns, 0),
       openAutopilotPulls: projects.reduce((sum, project) => sum + project.signals.openAutopilotPulls, 0),
       openIssues: projects.reduce((sum, project) => sum + project.signals.openIssues, 0),
+      inFlightCommits: projects.reduce((sum, project) => sum + project.signals.inFlightCommits, 0),
+      oldestAutopilotPrAgeSeconds: maxFinite(projects.map((project) => project.signals.oldestAutopilotPrAgeSeconds)),
+      oldestIssueAgeSeconds: maxFinite(projects.map((project) => project.signals.oldestIssueAgeSeconds)),
+      oldestActiveRunAgeSeconds: maxFinite(projects.map((project) => project.signals.oldestActiveRunAgeSeconds)),
       blockedProjects: projects.filter((project) => project.hazardLevel === "blocked").length,
       watchedProjects: projects.filter((project) => project.hazardLevel === "watch").length,
       clearProjects: projects.filter((project) => project.hazardLevel === "clear").length,
@@ -1031,7 +1048,7 @@ function compareActions(left: RepoAction, right: RepoAction): number {
   return order[left.priority] - order[right.priority] || left.repo.localeCompare(right.repo);
 }
 
-async function buildCodexReport(snapshot: Snapshot, fieldMap: FieldMap, options: Options): Promise<string | { finalResponse: string; usage?: { input_tokens: number; output_tokens: number } }> {
+async function buildCodexReport(snapshot: Snapshot, fieldMap: FieldMap, options: Options): Promise<string | { finalResponse: string; usage?: { input_tokens: number; output_tokens: number } | null }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for Codex report generation");

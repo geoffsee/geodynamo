@@ -62,7 +62,7 @@ jobs:
 
       - name: Generate report
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GEODYNAMO_GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: bun run report:ci
 

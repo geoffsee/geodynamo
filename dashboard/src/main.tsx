@@ -26,6 +26,10 @@ type Summary = {
   activeRuns: number;
   openAutopilotPulls: number;
   openIssues: number;
+  inFlightCommits: number;
+  oldestAutopilotPrAgeSeconds: number | null;
+  oldestIssueAgeSeconds: number | null;
+  oldestActiveRunAgeSeconds: number | null;
   blockedProjects: number;
   watchedProjects: number;
   clearProjects: number;
@@ -155,6 +159,10 @@ const EMPTY_SUMMARY: Summary = {
   activeRuns: 0,
   openAutopilotPulls: 0,
   openIssues: 0,
+  inFlightCommits: 0,
+  oldestAutopilotPrAgeSeconds: null,
+  oldestIssueAgeSeconds: null,
+  oldestActiveRunAgeSeconds: null,
   blockedProjects: 0,
   watchedProjects: 0,
   clearProjects: 0,
@@ -301,6 +309,15 @@ function SummaryStrip({ summary }: { summary: Summary }) {
     { label: "Active runs", value: summary.activeRuns, icon: <Clock3 size={18} />, tone: "active" },
     { label: "Open PRs", value: summary.openAutopilotPulls, icon: <GitPullRequest size={18} />, tone: "pr" },
     { label: "Issues", value: summary.openIssues ?? 0, icon: <AlertTriangle size={18} />, tone: "issue" },
+    { label: "In-flight commits", value: summary.inFlightCommits ?? 0, icon: <TrendingUp size={18} />, tone: "neutral" },
+    { label: "Oldest PR", value: formatSummaryDuration(summary.oldestAutopilotPrAgeSeconds ?? null), icon: <Clock3 size={18} />, tone: "watch" },
+    { label: "Oldest issue", value: formatSummaryDuration(summary.oldestIssueAgeSeconds ?? null), icon: <Clock3 size={18} />, tone: "watch" },
+    {
+      label: "Oldest active run",
+      value: formatSummaryDuration(summary.oldestActiveRunAgeSeconds ?? null),
+      icon: <Clock3 size={18} />,
+      tone: "watch",
+    },
   ] as const;
 
   return (
@@ -478,7 +495,7 @@ function ProjectCard({ project }: { project: RepoField }) {
           <Signal label="Failed" value={project.signals.failedRuns} />
           <Signal label="Active" value={project.signals.activeRuns} />
           <Signal label="PRs" value={project.signals.openAutopilotPulls} />
-          <Signal label="Commits" value={project.signals.inFlightCommits} />
+          <Signal label="Commits" value={project.signals.inFlightCommits ?? 0} />
           <Signal label="Issues" value={project.signals.openIssues} />
           <Signal label="Errors" value={project.signals.collectionErrors} />
         </div>
@@ -493,10 +510,10 @@ function ProjectCard({ project }: { project: RepoField }) {
             ) : "None"}
           </Detail>
           <Detail label="Branch">{latest?.branch ?? "n/a"}</Detail>
-          <Detail label="Sprint in flight">{formatDuration(project.signals.oldestAutopilotPrAgeSeconds)}</Detail>
-          <Detail label="Issue in flight">{formatDuration(project.signals.oldestIssueAgeSeconds)}</Detail>
-          <Detail label="Autopilot run in flight">{formatDuration(project.signals.oldestActiveRunAgeSeconds)}</Detail>
-          <Detail label="In-flight commits">{project.signals.inFlightCommits}</Detail>
+          <Detail label="Sprint in flight">{formatDuration(project.signals.oldestAutopilotPrAgeSeconds ?? null)}</Detail>
+          <Detail label="Issue in flight">{formatDuration(project.signals.oldestIssueAgeSeconds ?? null)}</Detail>
+          <Detail label="Autopilot run in flight">{formatDuration(project.signals.oldestActiveRunAgeSeconds ?? null)}</Detail>
+          <Detail label="In-flight commits">{project.signals.inFlightCommits ?? 0}</Detail>
           <Detail label="Drift">{formatDrift(project.drift)}</Detail>
           <Detail label="Workflow">{project.workflowNames.join(", ")}</Detail>
         </div>
@@ -643,6 +660,10 @@ function formatDrift(drift: RepoField["drift"]): string {
   const latest = drift.latestRunChanged ? "run changed" : "run steady";
   const hazard = drift.hazardChanged ? "hazard changed" : "hazard steady";
   return `${latest}, ${hazard}, PR ${formatDelta(drift.openPullDelta)}, failed ${formatDelta(drift.failureDelta)}`;
+}
+
+function formatSummaryDuration(seconds: number | null): string {
+  return formatDuration(seconds);
 }
 
 function formatDuration(seconds: number | null): string {

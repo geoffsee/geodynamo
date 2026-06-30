@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 
 const outDir = "dist/dashboard";
 
@@ -26,7 +26,14 @@ if (!result.success) {
   process.exit(1);
 }
 
-await copyFile("dashboard/index.html", `${outDir}/index.html`);
+const buildId = new Date().toISOString().replace(/[^0-9]/g, "");
+const indexHtml = await readFile("dashboard/index.html", "utf8");
+await Bun.write(
+  `${outDir}/index.html`,
+  indexHtml
+    .replace("./styles.css", `./styles.css?v=${buildId}`)
+    .replace("./assets/main.js", `./assets/main.js?v=${buildId}`),
+);
 await copyFile("dashboard/styles.css", `${outDir}/styles.css`);
 await Bun.write(`${outDir}/.nojekyll`, "");
 

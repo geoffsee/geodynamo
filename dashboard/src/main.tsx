@@ -266,7 +266,7 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
       <div className="activity-head">
         <div className="section-title">
           <Activity size={18} aria-hidden="true" />
-          Repo activity over time
+          Activity
         </div>
         <span>{snapshots.length} snapshots</span>
       </div>

@@ -256,10 +256,11 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
     };
   });
   const maxActivity = Math.max(1, ...series.flatMap((line) => line.values));
+  const activityCeiling = Math.max(1, Math.ceil(maxActivity * 1.15));
   const xFor = (index: number) => snapshots.length <= 1
     ? width / 2
     : padding + (index / (snapshots.length - 1)) * graphWidth;
-  const yFor = (value: number) => padding + graphHeight - (value / maxActivity) * graphHeight;
+  const yFor = (value: number) => padding + graphHeight - (value / activityCeiling) * graphHeight;
 
   return (
     <section className="panel activity-panel">
@@ -271,7 +272,7 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
         <span>{snapshots.length} snapshots</span>
       </div>
       <div className="activity-chart" aria-label="Line graph of repo activity over time">
-        <svg viewBox={`0 0 ${width} ${height}`} role="img">
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img">
           <line className="chart-axis" x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} />
           <line className="chart-axis" x1={padding} x2={padding} y1={padding} y2={height - padding} />
           {[0.25, 0.5, 0.75].map((tick) => (

@@ -198,36 +198,47 @@ textarea {
 .activity-chart {
   overflow: hidden;
   width: 100%;
+  height: 220px;
   border: 1px solid #e0e5de;
   border-radius: 8px;
   background: linear-gradient(180deg, #fbfcfa, #f5f8f3);
 }
 
-.activity-chart svg {
-  display: block;
-  width: 100%;
-  height: 220px;
+.activity-tooltip {
+  display: grid;
+  gap: 6px;
+  min-width: 168px;
+  padding: 9px 10px;
+  border: 1px solid #d6ddd4;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(23, 32, 29, 0.12);
+  color: #26352f;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
-.chart-axis,
-.chart-grid {
-  stroke: #d9e0d7;
-  stroke-width: 1;
+.activity-tooltip > strong {
+  color: #59645d;
+  font-size: 0.74rem;
+  text-transform: uppercase;
 }
 
-.chart-grid {
-  stroke-dasharray: 5 8;
+.activity-tooltip span {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
 }
 
-.activity-line {
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 3;
+.activity-tooltip i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
 }
 
-.activity-point {
-  stroke: #ffffff;
-  stroke-width: 2;
+.activity-tooltip b {
+  color: #17201d;
 }
 
 .activity-legend {
@@ -769,7 +780,7 @@ code {
     gap: 4px;
   }
 
-  .activity-chart svg {
+  .activity-chart {
     height: 180px;
   }
 

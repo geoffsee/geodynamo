@@ -13,6 +13,16 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  type TooltipContentProps,
+} from "recharts";
 
 type HazardLevel = "clear" | "watch" | "blocked";
 type ActionPriority = "observe" | "next" | "urgent";
@@ -138,6 +148,11 @@ type HistoryOutput = {
   snapshots: HistorySnapshot[];
 };
 
+type ActivityChartDatum = {
+  label: string;
+  timestamp: string;
+} & Record<string, number | string>;
+
 type DataState = {
   loading: boolean;
   fieldMap: FieldMap | null;
@@ -238,11 +253,6 @@ function App() {
 function ActivityGraph({ history, current }: { history: HistoryOutput | null; current: FieldMap }) {
   const snapshots = (history?.snapshots.length ? history.snapshots : [historyFromCurrent(current)]).slice(-30);
   const repos = current.projects.map((project) => project.repo);
-  const width = 960;
-  const height = 220;
-  const padding = 24;
-  const graphWidth = width - padding * 2;
-  const graphHeight = height - padding * 2;
   const series = repos.map((repo, repoIndex) => {
     const values = snapshots.map((snapshot) => {
       const project = snapshot.projects.find((candidate) => candidate.repo === repo);
@@ -257,10 +267,22 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
   });
   const maxActivity = Math.max(1, ...series.flatMap((line) => line.values));
   const activityCeiling = Math.max(1, Math.ceil(maxActivity * 1.15));
-  const xFor = (index: number) => snapshots.length <= 1
-    ? width / 2
-    : padding + (index / (snapshots.length - 1)) * graphWidth;
-  const yFor = (value: number) => padding + graphHeight - (value / activityCeiling) * graphHeight;
+  const snapshotData: ActivityChartDatum[] = snapshots.map((snapshot, snapshotIndex) => {
+    const row: ActivityChartDatum = {
+      label: formatShortDate(snapshot.generatedAt),
+      timestamp: snapshot.generatedAt,
+    };
+
+    for (const line of series) {
+      row[line.repo] = line.values[snapshotIndex] ?? 0;
+    }
+
+    return row;
+  });
+  const onlySnapshotDatum = snapshotData[0];
+  const chartData: ActivityChartDatum[] = snapshotData.length === 1 && onlySnapshotDatum
+    ? [{ ...onlySnapshotDatum, label: "Baseline" }, onlySnapshotDatum]
+    : snapshotData;
 
   return (
     <section className="panel activity-panel">
@@ -272,42 +294,42 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
         <span>{snapshots.length} snapshots</span>
       </div>
       <div className="activity-chart" aria-label="Line graph of repo activity over time">
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img">
-          <line className="chart-axis" x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} />
-          <line className="chart-axis" x1={padding} x2={padding} y1={padding} y2={height - padding} />
-          {[0.25, 0.5, 0.75].map((tick) => (
-            <line
-              className="chart-grid"
-              key={tick}
-              x1={padding}
-              x2={width - padding}
-              y1={padding + graphHeight * tick}
-              y2={padding + graphHeight * tick}
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 18, right: 24, bottom: 6, left: 0 }}>
+            <CartesianGrid stroke="#d9e0d7" strokeDasharray="5 8" vertical={false} />
+            <XAxis
+              axisLine={{ stroke: "#d9e0d7" }}
+              dataKey="label"
+              minTickGap={24}
+              tick={{ fill: "#68736d", fontSize: 12, fontWeight: 700 }}
+              tickLine={false}
             />
-          ))}
-          {series.map((line) => (
-            <g key={line.repo}>
-              <polyline
-                className="activity-line"
-                fill="none"
+            <YAxis
+              allowDecimals={false}
+              axisLine={{ stroke: "#d9e0d7" }}
+              domain={[0, activityCeiling]}
+              tick={{ fill: "#68736d", fontSize: 12, fontWeight: 700 }}
+              tickLine={false}
+              width={36}
+            />
+            <Tooltip content={(props) => <ActivityTooltip {...props} />} cursor={{ stroke: "#bfcbc2", strokeWidth: 1 }} />
+            {series.map((line) => (
+              <Line
+                activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 2 }}
+                dataKey={line.repo}
+                dot={{ r: 3.5, stroke: "#ffffff", strokeWidth: 2 }}
+                isAnimationActive={false}
+                key={line.repo}
+                name={shortRepoName(line.repo)}
                 stroke={line.color}
-                points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3}
+                type="monotone"
               />
-              {line.values.map((value, index) => (
-                <circle
-                  className="activity-point"
-                  key={`${line.repo}-${snapshots[index]?.generatedAt ?? index}`}
-                  cx={xFor(index)}
-                  cy={yFor(value)}
-                  r="3.5"
-                  fill={line.color}
-                >
-                  <title>{`${line.repo}: ${value} activity on ${formatShortDate(snapshots[index]?.generatedAt ?? "")}`}</title>
-                </circle>
-              ))}
-            </g>
-          ))}
-        </svg>
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
       </div>
       <div className="activity-legend">
         {series.map((line) => (
@@ -319,6 +341,25 @@ function ActivityGraph({ history, current }: { history: HistoryOutput | null; cu
         ))}
       </div>
     </section>
+  );
+}
+
+function ActivityTooltip({ active, payload, label }: TooltipContentProps) {
+  if (!active || !payload?.length) return null;
+
+  const timestamp = (payload[0]?.payload as ActivityChartDatum | undefined)?.timestamp;
+
+  return (
+    <div className="activity-tooltip">
+      <strong>{timestamp ? formatShortDate(timestamp) : label}</strong>
+      {payload.map((item) => (
+        <span key={String(item.dataKey)}>
+          <i style={{ background: item.color ?? "#68736d" }} />
+          {item.name}
+          <b>{item.value ?? 0}</b>
+        </span>
+      ))}
+    </div>
   );
 }
 

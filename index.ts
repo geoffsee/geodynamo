@@ -127,6 +127,7 @@ type PullRequest = {
   created_at: string;
   updated_at: string;
   auto_merge?: unknown;
+  commits?: number;
 };
 
 type Issue = {
@@ -201,6 +202,10 @@ type RepoField = {
     activeRuns: number;
     openAutopilotPulls: number;
     openIssues: number;
+    inFlightCommits: number;
+    oldestAutopilotPrAgeSeconds: number | null;
+    oldestIssueAgeSeconds: number | null;
+    oldestActiveRunAgeSeconds: number | null;
     collectionErrors: number;
   };
   currentIssues: Issue[];
@@ -713,16 +718,21 @@ async function collectJobs(jobsUrl: string, errors: string[]): Promise<Job[]> {
 }
 
 async function collectOpenPulls(repo: RepoSlug): Promise<PullRequest[]> {
-  const response = await githubGet<PullRequest[]>(
+  const response = await githubGet<Array<
+    Omit<PullRequest, "commits"> & { commits?: number }
+  >(
     `https://api.github.com/repos/${repo}/pulls?state=open&per_page=50`,
   );
 
-  return response
+  const autopilotPulls = response
     .filter((pull) => {
       const haystack = `${pull.title} ${pull.user?.login ?? ""}`.toLowerCase();
       return CARETTA_IDENTIFIERS.some((identifier) => haystack.includes(identifier));
     })
-    .map((pull) => ({
+    .slice(0, 10);
+
+  return Promise.all(
+    autopilotPulls.map(async (pull) => ({
       title: pull.title,
       html_url: pull.html_url,
       number: pull.number,
@@ -731,8 +741,9 @@ async function collectOpenPulls(repo: RepoSlug): Promise<PullRequest[]> {
       created_at: pull.created_at,
       updated_at: pull.updated_at,
       auto_merge: pull.auto_merge,
-    }))
-    .slice(0, 10);
+      commits: pull.commits ?? (await collectPullCommitCount(repo, pull.number)),
+    })),
+  );
 }
 
 async function collectOpenIssues(repo: RepoSlug): Promise<Issue[]> {
@@ -755,10 +766,29 @@ async function collectOpenIssues(repo: RepoSlug): Promise<Issue[]> {
     .slice(0, 20);
 }
 
+async function collectPullCommitCount(repo: RepoSlug, pullNumber: number): Promise<number | undefined> {
+  try {
+    const pull = await githubGet<{ commits?: number }>(`https://api.github.com/repos/${repo}/pulls/${pullNumber}`);
+    return typeof pull.commits === "number" && Number.isFinite(pull.commits) ? pull.commits : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function durationSeconds(start: string | null, end: string | null): number | null {
   if (!start || !end) return null;
   const elapsed = Date.parse(end) - Date.parse(start);
   return Number.isFinite(elapsed) && elapsed >= 0 ? Math.round(elapsed / 1000) : null;
+}
+
+function oldestAgeInSeconds(starts: string[], end: string): number | null {
+  let oldest = null as number | null;
+  for (const start of starts) {
+    const age = durationSeconds(start, end);
+    if (age === null) continue;
+    if (oldest === null || age > oldest) oldest = age;
+  }
+  return oldest;
 }
 
 function errorMessage(error: unknown): string {
@@ -792,6 +822,19 @@ function buildRepoField(repo: RepoReport, previous: PreviousRepoState | null): R
   const failedRuns = repo.runs.filter((run) => run.conclusion && run.conclusion !== "success");
   const activeRuns = repo.runs.filter((run) => run.status !== "completed");
   const latestRun = repo.runs[0] ?? null;
+  const inFlightCommits = repo.openAutopilotPulls.reduce((sum, pull) => sum + (pull.commits ?? 0), 0);
+  const oldestAutopilotPrAgeSeconds = oldestAgeInSeconds(
+    repo.openAutopilotPulls.map((pull) => pull.created_at),
+    repo.generatedAt,
+  );
+  const oldestIssueAgeSeconds = oldestAgeInSeconds(
+    repo.openIssues.map((issue) => issue.created_at),
+    repo.generatedAt,
+  );
+  const oldestActiveRunAgeSeconds = oldestAgeInSeconds(
+    activeRuns.map((run) => run.created_at),
+    repo.generatedAt,
+  );
   const latestRunSignal = latestRun
     ? {
       id: latestRun.id,
@@ -823,6 +866,10 @@ function buildRepoField(repo: RepoReport, previous: PreviousRepoState | null): R
       activeRuns: activeRuns.length,
       openAutopilotPulls: repo.openAutopilotPulls.length,
       openIssues: repo.openIssues.length,
+      inFlightCommits,
+      oldestAutopilotPrAgeSeconds,
+      oldestIssueAgeSeconds,
+      oldestActiveRunAgeSeconds,
       collectionErrors: repo.errors.length,
     },
     currentIssues: repo.openIssues,

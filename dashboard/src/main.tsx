@@ -78,6 +78,10 @@ type RepoField = {
     activeRuns: number;
     openAutopilotPulls: number;
     openIssues: number;
+    inFlightCommits: number;
+    oldestAutopilotPrAgeSeconds: number | null;
+    oldestIssueAgeSeconds: number | null;
+    oldestActiveRunAgeSeconds: number | null;
     collectionErrors: number;
   };
   currentIssues: Issue[];
@@ -474,6 +478,7 @@ function ProjectCard({ project }: { project: RepoField }) {
           <Signal label="Failed" value={project.signals.failedRuns} />
           <Signal label="Active" value={project.signals.activeRuns} />
           <Signal label="PRs" value={project.signals.openAutopilotPulls} />
+          <Signal label="Commits" value={project.signals.inFlightCommits} />
           <Signal label="Issues" value={project.signals.openIssues} />
           <Signal label="Errors" value={project.signals.collectionErrors} />
         </div>
@@ -488,6 +493,10 @@ function ProjectCard({ project }: { project: RepoField }) {
             ) : "None"}
           </Detail>
           <Detail label="Branch">{latest?.branch ?? "n/a"}</Detail>
+          <Detail label="Sprint in flight">{formatDuration(project.signals.oldestAutopilotPrAgeSeconds)}</Detail>
+          <Detail label="Issue in flight">{formatDuration(project.signals.oldestIssueAgeSeconds)}</Detail>
+          <Detail label="Autopilot run in flight">{formatDuration(project.signals.oldestActiveRunAgeSeconds)}</Detail>
+          <Detail label="In-flight commits">{project.signals.inFlightCommits}</Detail>
           <Detail label="Drift">{formatDrift(project.drift)}</Detail>
           <Detail label="Workflow">{project.workflowNames.join(", ")}</Detail>
         </div>
@@ -503,7 +512,7 @@ function ProjectCard({ project }: { project: RepoField }) {
   );
 }
 
-function Signal({ label, value }: { label: string; value: number }) {
+function Signal({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="signal">
       <span>{label}</span>
@@ -634,6 +643,20 @@ function formatDrift(drift: RepoField["drift"]): string {
   const latest = drift.latestRunChanged ? "run changed" : "run steady";
   const hazard = drift.hazardChanged ? "hazard changed" : "hazard steady";
   return `${latest}, ${hazard}, PR ${formatDelta(drift.openPullDelta)}, failed ${formatDelta(drift.failureDelta)}`;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return "n/a";
+  if (seconds <= 0) return "now";
+
+  const rounded = Math.floor(seconds);
+  const days = Math.floor(rounded / 86400);
+  const hours = Math.floor((rounded % 86400) / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 createRoot(document.getElementById("root")!).render(

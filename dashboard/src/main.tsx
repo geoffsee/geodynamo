@@ -299,13 +299,15 @@ function App() {
           <SummaryStrip summary={summary} />
           <ActivityGraph history={data.history} current={data.fieldMap} />
           <div className="dashboard-grid">
-            <ActionQueue actions={actions} />
+            <div className="dashboard-main">
+              <ActionQueue actions={actions} />
+              <ProjectRows projects={data.fieldMap.projects} />
+            </div>
             <div className="dashboard-side">
               <WorkFocusPanel current={data.fieldMap} />
               <TrendPanel history={data.history} current={data.fieldMap} />
             </div>
           </div>
-          <ProjectRows projects={data.fieldMap.projects} />
         </>
       ) : null}
     </main>

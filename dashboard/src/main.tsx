@@ -168,6 +168,8 @@ const EMPTY_SUMMARY: Summary = {
   clearProjects: 0,
 };
 
+const REPO_LINE_COLORS = ["#175f71", "#c64332", "#268a5a", "#c98a18", "#6f5ca8", "#8a5a32"];
+
 function App() {
   const [data, setData] = useState<DataState>({
     loading: true,
@@ -221,6 +223,7 @@ function App() {
       {data.fieldMap ? (
         <>
           <SummaryStrip summary={summary} />
+          <ActivityGraph history={data.history} current={data.fieldMap} />
           <div className="dashboard-grid">
             <ActionQueue actions={actions} />
             <TrendPanel history={data.history} current={data.fieldMap} />
@@ -229,6 +232,92 @@ function App() {
         </>
       ) : null}
     </main>
+  );
+}
+
+function ActivityGraph({ history, current }: { history: HistoryOutput | null; current: FieldMap }) {
+  const snapshots = (history?.snapshots.length ? history.snapshots : [historyFromCurrent(current)]).slice(-30);
+  const repos = current.projects.map((project) => project.repo);
+  const width = 960;
+  const height = 220;
+  const padding = 24;
+  const graphWidth = width - padding * 2;
+  const graphHeight = height - padding * 2;
+  const series = repos.map((repo, repoIndex) => {
+    const values = snapshots.map((snapshot) => {
+      const project = snapshot.projects.find((candidate) => candidate.repo === repo);
+      return project ? projectActivity(project) : 0;
+    });
+    return {
+      repo,
+      values,
+      latest: values[values.length - 1] ?? 0,
+      color: REPO_LINE_COLORS[repoIndex % REPO_LINE_COLORS.length],
+    };
+  });
+  const maxActivity = Math.max(1, ...series.flatMap((line) => line.values));
+  const xFor = (index: number) => snapshots.length <= 1
+    ? width / 2
+    : padding + (index / (snapshots.length - 1)) * graphWidth;
+  const yFor = (value: number) => padding + graphHeight - (value / maxActivity) * graphHeight;
+
+  return (
+    <section className="panel activity-panel">
+      <div className="activity-head">
+        <div className="section-title">
+          <Activity size={18} aria-hidden="true" />
+          Repo activity over time
+        </div>
+        <span>{snapshots.length} snapshots</span>
+      </div>
+      <div className="activity-chart" aria-label="Line graph of repo activity over time">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img">
+          <line className="chart-axis" x1={padding} x2={width - padding} y1={height - padding} y2={height - padding} />
+          <line className="chart-axis" x1={padding} x2={padding} y1={padding} y2={height - padding} />
+          {[0.25, 0.5, 0.75].map((tick) => (
+            <line
+              className="chart-grid"
+              key={tick}
+              x1={padding}
+              x2={width - padding}
+              y1={padding + graphHeight * tick}
+              y2={padding + graphHeight * tick}
+            />
+          ))}
+          {series.map((line) => (
+            <g key={line.repo}>
+              <polyline
+                className="activity-line"
+                fill="none"
+                stroke={line.color}
+                points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
+              />
+              {line.values.map((value, index) => (
+                <circle
+                  className="activity-point"
+                  key={`${line.repo}-${snapshots[index]?.generatedAt ?? index}`}
+                  cx={xFor(index)}
+                  cy={yFor(value)}
+                  r="3.5"
+                  fill={line.color}
+                >
+                  <title>{`${line.repo}: ${value} activity on ${formatShortDate(snapshots[index]?.generatedAt ?? "")}`}</title>
+                </circle>
+              ))}
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div className="activity-legend">
+        {series.map((line) => (
+          <span key={line.repo}>
+            <i style={{ background: line.color }} />
+            {shortRepoName(line.repo)}
+            <strong>{line.latest}</strong>
+          </span>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -621,6 +710,14 @@ function compactActionPriorities(actions: RepoAction[]): ActionPriority[] {
 
 function githubRepoUrl(repo: string): string {
   return `https://github.com/${repo}`;
+}
+
+function shortRepoName(repo: string): string {
+  return repo.split("/").at(-1) ?? repo;
+}
+
+function projectActivity(project: HistoryProject): number {
+  return project.failedRuns + project.activeRuns + project.openAutopilotPulls + project.openIssues;
 }
 
 function linkLabel(link: string, index: number): string {

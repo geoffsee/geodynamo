@@ -611,7 +611,7 @@ async function githubGet<T>(url: string): Promise<T> {
     "X-GitHub-Api-Version": "2022-11-28",
   });
 
-  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  const token = githubToken();
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -619,10 +619,31 @@ async function githubGet<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`GitHub request failed ${response.status} ${response.statusText}: ${url}\n${detail}`);
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    const reset = response.headers.get("x-ratelimit-reset");
+    const limit = response.headers.get("x-ratelimit-limit");
+    const rateLimit = limit || remaining || reset
+      ? `\nrate-limit: limit=${limit ?? "unknown"} remaining=${remaining ?? "unknown"} reset=${formatRateLimitReset(reset)}`
+      : "";
+    throw new Error(`GitHub request failed ${response.status} ${response.statusText}: ${url}${rateLimit}\n${detail}`);
   }
 
   return await response.json() as T;
+}
+
+function githubToken(): string {
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+}
+
+function hasGithubToken(): boolean {
+  return githubToken().trim().length > 0;
+}
+
+function formatRateLimitReset(value: string | null): string {
+  if (!value) return "unknown";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return value;
+  return new Date(seconds * 1000).toISOString();
 }
 
 async function collectRepo(project: ProjectDescriptor, options: Options): Promise<RepoReport> {
@@ -745,7 +766,7 @@ async function collectOpenPulls(repo: RepoSlug): Promise<PullRequest[]> {
       created_at: pull.created_at,
       updated_at: pull.updated_at,
       auto_merge: pull.auto_merge,
-      commits: pull.commits ?? (await collectPullCommitCount(repo, pull.number)),
+      commits: pull.commits ?? (hasGithubToken() ? await collectPullCommitCount(repo, pull.number) : undefined),
     })),
   );
 }

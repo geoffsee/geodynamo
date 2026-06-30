@@ -111,9 +111,12 @@ Codex-written report. Without it, the command will fall back to the
 deterministic report unless `--fail-on-codex-error` is passed.
 
 The report step does not pass the repository-scoped `github.token` to fleet
-collection. Public tracked repositories are read without an auth header; set a
-`GEODYNAMO_GITHUB_TOKEN` secret only when tracking private repositories or when
-you need higher GitHub API limits.
+collection because that token is scoped to the Geodynamo repository, not the
+tracked fleet repositories. Public tracked repositories can be read without an
+auth header, but scheduled production runs should set a `GEODYNAMO_GITHUB_TOKEN`
+secret for stable GitHub API rate limits. Use a fine-grained token with read-only
+access to repository metadata, Actions, issues, and pull requests for the
+tracked repositories.
 
 GitHub Pages must be enabled once in repository settings with Source set to
 GitHub Actions before the first dashboard deployment can publish.
